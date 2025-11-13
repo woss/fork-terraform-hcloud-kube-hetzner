@@ -73,7 +73,7 @@ resource "hcloud_load_balancer_network" "control_plane" {
 
   lifecycle {
     # Removed 'ip' from ignore_changes to allow proper management with hcloud provider 1.56+
-    ignore_changes = [enable_public_interface]
+    ignore_changes = []
   }
 }
 
