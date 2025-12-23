@@ -638,14 +638,7 @@ hubble:
 MTU: 1450
   EOT
 
-  cilium_values_base = var.cilium_values != "" ? var.cilium_values : local.cilium_values_default
-
-  cilium_values = var.cilium_merge_values != "" ? yamlencode(
-    provider::deepmerge::mergo(
-      yamldecode(local.cilium_values_base),
-      yamldecode(var.cilium_merge_values)
-    )
-  ) : local.cilium_values_base
+  cilium_values = module.values_merger_cilium.values
 
   # Not to be confused with the other helm values, this is used for the calico.yaml kustomize patch
   # It also serves as a stub for a potential future use via helm values
@@ -687,14 +680,7 @@ persistence:
   %{if var.disable_hetzner_csi~}defaultClass: true%{else~}defaultClass: false%{endif~}
   EOT
 
-  longhorn_values_base = var.longhorn_values != "" ? var.longhorn_values : local.longhorn_values_default
-
-  longhorn_values = var.longhorn_merge_values != "" ? yamlencode(
-    provider::deepmerge::mergo(
-      yamldecode(local.longhorn_values_base),
-      yamldecode(var.longhorn_merge_values)
-    )
-  ) : local.longhorn_values_base
+  longhorn_values = module.values_merger_longhorn.values
 
   csi_driver_smb_values = var.csi_driver_smb_values != "" ? var.csi_driver_smb_values : <<EOT
   EOT
@@ -741,14 +727,7 @@ controller:
 %{endif~}
   EOT
 
-  nginx_values_base = var.nginx_values != "" ? var.nginx_values : local.nginx_values_default
-
-  nginx_values = var.nginx_merge_values != "" ? yamlencode(
-    provider::deepmerge::mergo(
-      yamldecode(local.nginx_values_base),
-      yamldecode(var.nginx_merge_values)
-    )
-  ) : local.nginx_values_base
+  nginx_values = module.values_merger_nginx.values
 
   hetzner_ccm_values_default = <<EOT
 networking:
@@ -775,14 +754,7 @@ env:
 hostNetwork: true
   EOT
 
-  hetzner_ccm_values_base = var.hetzner_ccm_values != "" ? var.hetzner_ccm_values : local.hetzner_ccm_values_default
-
-  hetzner_ccm_values = var.hetzner_ccm_merge_values != "" ? yamlencode(
-    provider::deepmerge::mergo(
-      yamldecode(local.hetzner_ccm_values_base),
-      yamldecode(var.hetzner_ccm_merge_values)
-    )
-  ) : local.hetzner_ccm_values_base
+  hetzner_ccm_values = module.values_merger_hetzner_ccm.values
 
   haproxy_values_default = <<EOT
 controller:
@@ -831,14 +803,7 @@ controller:
 %{endif~}
   EOT
 
-haproxy_values_base = var.haproxy_values != "" ? var.haproxy_values : local.haproxy_values_default
-
-haproxy_values = var.haproxy_merge_values != "" ? yamlencode(
-  provider::deepmerge::mergo(
-    yamldecode(local.haproxy_values_base),
-    yamldecode(var.haproxy_merge_values)
-  )
-) : local.haproxy_values_base
+haproxy_values = module.values_merger_haproxy.values
 
 traefik_values_default = <<EOT
 image:
@@ -969,14 +934,7 @@ autoscaling:
 %{endif~}
 EOT
 
-traefik_values_base = var.traefik_values != "" ? var.traefik_values : local.traefik_values_default
-
-traefik_values = var.traefik_merge_values != "" ? yamlencode(
-  provider::deepmerge::mergo(
-    yamldecode(local.traefik_values_base),
-    yamldecode(var.traefik_merge_values)
-  )
-) : local.traefik_values_base
+traefik_values = module.values_merger_traefik.values
 
 rancher_values_default = <<EOT
 hostname: "${var.rancher_hostname != "" ? var.rancher_hostname : var.lb_hostname}"
@@ -988,14 +946,7 @@ global:
       enabled: false
   EOT
 
-rancher_values_base = var.rancher_values != "" ? var.rancher_values : local.rancher_values_default
-
-rancher_values = var.rancher_merge_values != "" ? yamlencode(
-  provider::deepmerge::mergo(
-    yamldecode(local.rancher_values_base),
-    yamldecode(var.rancher_merge_values)
-  )
-) : local.rancher_values_base
+rancher_values = module.values_merger_rancher.values
 
 cert_manager_values_default = <<EOT
 crds:
@@ -1013,14 +964,7 @@ extraArgs:
 %{endif~}
   EOT
 
-cert_manager_values_base = var.cert_manager_values != "" ? var.cert_manager_values : local.cert_manager_values_default
-
-cert_manager_values = var.cert_manager_merge_values != "" ? yamlencode(
-  provider::deepmerge::mergo(
-    yamldecode(local.cert_manager_values_base),
-    yamldecode(var.cert_manager_merge_values)
-  )
-) : local.cert_manager_values_base
+cert_manager_values = module.values_merger_cert_manager.values
 
 kured_options = merge({
   "reboot-command" : "/usr/bin/systemctl reboot",

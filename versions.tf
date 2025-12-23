@@ -25,9 +25,5 @@ terraform {
       source  = "anapsix/semvers"
       version = ">= 0.7.1"
     }
-    deepmerge = {
-      source  = "isometry/deepmerge"
-      version = "~> 1.0"
-    }
   }
 }
