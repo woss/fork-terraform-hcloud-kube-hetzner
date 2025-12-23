@@ -969,7 +969,7 @@ traefik_values = var.traefik_merge_values != "" ? yamlencode(
   )
 ) : local.traefik_values_base
 
-rancher_values = var.rancher_values != "" ? var.rancher_values : <<EOT
+rancher_values_default = <<EOT
 hostname: "${var.rancher_hostname != "" ? var.rancher_hostname : var.lb_hostname}"
 replicas: ${length(local.control_plane_nodes)}
 bootstrapPassword: "${length(var.rancher_bootstrap_password) == 0 ? resource.random_password.rancher_bootstrap[0].result : var.rancher_bootstrap_password}"
@@ -978,6 +978,15 @@ global:
     psp:
       enabled: false
   EOT
+
+rancher_values_base = var.rancher_values != "" ? var.rancher_values : local.rancher_values_default
+
+rancher_values = var.rancher_merge_values != "" ? yamlencode(
+  provider::deepmerge::mergo(
+    yamldecode(local.rancher_values_base),
+    yamldecode(var.rancher_merge_values)
+  )
+) : local.rancher_values_base
 
 cert_manager_values_default = <<EOT
 crds:

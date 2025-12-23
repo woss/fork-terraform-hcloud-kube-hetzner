@@ -1060,6 +1060,17 @@ variable "rancher_values" {
   description = "Additional helm values file to pass to Rancher as 'valuesContent' at the HelmChart."
 }
 
+variable "rancher_merge_values" {
+  type        = string
+  default     = ""
+  description = "Additional Helm values to merge with defaults (or rancher_values if set). User values take precedence. Requires valid YAML format."
+
+  validation {
+    condition     = var.rancher_merge_values == "" || can(yamldecode(var.rancher_merge_values))
+    error_message = "rancher_merge_values must be valid YAML format or empty string."
+  }
+}
+
 variable "kured_version" {
   type        = string
   default     = null
