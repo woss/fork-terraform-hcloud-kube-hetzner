@@ -302,7 +302,7 @@ The subsequent sections on `control_plane_nodepools` and `agent_nodepools` are e
   # For instance, one is ok (non-HA), two is not ok, and three is ok (becomes HA). It does not matter if they are in the same nodepool or not! So they can be in different locations and of various types.
 
   # Of course, you can choose any number of nodepools you want, with the location you want. The only constraint on the location is that you need to stay in the same network region, Europe, or the US.
-  # For the server type, the minimum instance supported is cx22. The cax11 provides even better value for money if your applications are compatible with arm64; see https://www.hetzner.com/cloud.
+  # For the server type, the minimum instance supported is cx23. If you want to use arm64 use cax11; see https://www.hetzner.com/cloud.
 
   # IMPORTANT: Before you create your cluster, you can do anything you want with the nodepools, but you need at least one of each, control plane and agent.
   # Once the cluster is up and running, you can change nodepool count and even set it to 0 (in the case of the first control-plane nodepool, the minimum is 1).
@@ -326,7 +326,7 @@ The subsequent sections on `control_plane_nodepools` and `agent_nodepools` are e
   control_plane_nodepools = [
     {
       name        = "control-plane-fsn1",
-      server_type = "cx22",
+      server_type = "cx23",
       location    = "fsn1",
       labels      = [],
       taints      = [],
@@ -381,8 +381,8 @@ The subsequent sections on `control_plane_nodepools` and `agent_nodepools` are e
       * Constraints: Lowercase, no special characters except dashes (`-`).
       * Used for naming resources in Hetzner and for Kubernetes node labels/names.
     * **`server_type` (String, Obligatory):**
-      * Hetzner server type (e.g., `cx22`, `cpx21` for x86; `cax11`, `cax21` for ARM).
-      * Minimum for control plane: `cx22` is often cited. More demanding setups (e.g., with Cilium CNI, Rancher) might require more RAM (e.g., `cx31`/`cpx31` or `cax21`/`cax31`).
+      * Hetzner server type (e.g., `cx23`, `cx33` for x86; `cax11`, `cax21` for ARM).
+      * Minimum for control plane: `cx23` is often cited. More demanding setups (e.g., with Cilium CNI, Rancher) might require more RAM (e.g., `cx33`/`cx43` or `cax21`/`cax31`).
     * **`location` (String, Obligatory):**
       * Hetzner location (e.g., `fsn1`, `nbg1`, `hel1`, `ash`).
       * Must be within the `network_region` defined earlier.
@@ -434,7 +434,7 @@ The example shows three control plane nodepools, each with one node, in differen
   agent_nodepools = [
     {
       name        = "agent-small",
-      server_type = "cx22",
+      server_type = "cx23",
       location    = "fsn1",
       labels      = [],
       taints      = [],
@@ -447,7 +447,7 @@ The example shows three control plane nodepools, each with one node, in differen
     },
     {
       name        = "agent-large",
-      server_type = "cx32",
+      server_type = "cx33",
       location    = "nbg1",
       labels      = [],
       taints      = [],
@@ -457,7 +457,7 @@ The example shows three control plane nodepools, each with one node, in differen
     },
     {
       name        = "storage",
-      server_type = "cx32",
+      server_type = "cx33",
       location    = "fsn1",
       labels      = [
         "node.kubernetes.io/server-usage=storage" # Example label
@@ -475,7 +475,7 @@ The example shows three control plane nodepools, each with one node, in differen
     # used with Cilium's Egress Gateway feature
     {
       name        = "egress",
-      server_type = "cx22",
+      server_type = "cx23",
       location    = "fsn1",
       labels = [
         "node.kubernetes.io/role=egress"
@@ -704,7 +704,7 @@ The example shows three control plane nodepools, each with one node, in differen
   # autoscaler_nodepools = [
   #  {
   #    name        = "autoscaled-small"
-  #    server_type = "cx32"
+  #    server_type = "cx33"
   #    location    = "fsn1"
   #    min_nodes   = 0
   #    max_nodes   = 5
@@ -735,7 +735,7 @@ The example shows three control plane nodepools, each with one node, in differen
   * **Labels/Taints Versioning (⚠️):** The ability to set `labels` and `taints` directly in the `autoscaler_nodepools` definition depends on using a sufficiently new version of the Cluster Autoscaler image.
   * **Nodepool Attributes (per map within `autoscaler_nodepools`):**
     * **`name` (String, Obligatory):** A unique name for this autoscaled nodepool.
-    * **`server_type` (String, Obligatory):** The Hetzner server type for nodes created in this pool (e.g., `cx32`, `cax21`). Must adhere to the single-architecture constraint mentioned above.
+    * **`server_type` (String, Obligatory):** The Hetzner server type for nodes created in this pool (e.g., `cx33`, `cax21`). Must adhere to the single-architecture constraint mentioned above.
     * **`location` (String, Obligatory):** Hetzner location for nodes in this pool.
     * **`min_nodes` (Number, Obligatory):** The minimum number of nodes this pool can scale down to. Can be `0`.
     * **`max_nodes` (Number, Obligatory):** The maximum number of nodes this pool can scale up to.
@@ -1805,7 +1805,7 @@ Excellent! Let's continue our meticulous dissection.
     * `"calico"`: A popular CNI known for its robust network policy enforcement and scalability. Can operate in IP-in-IP, VXLAN, or BGP modes (BGP mode is more for on-prem/bare-metal).
     * `"cilium"`: A powerful CNI based on eBPF. Offers advanced networking features (e.g., efficient load balancing, fine-grained network policies, Hubble observability, service mesh capabilities, transparent encryption, egress gateway).
   * **k3s Integration:** k3s can be started with CNI disabled (`--flannel-backend=none` or similar flags) allowing an external CNI like Calico or Cilium to be installed. This module handles that process.
-  * **Cilium RAM Warning (⚠️):** Cilium, especially with all features enabled, can be more resource-intensive than Flannel. The comment warns that control plane nodes might need more than 2GB of RAM (e.g., `cx22` might be tight, consider `cx31`/`cpx21` or higher) for Cilium pods to run reliably.
+  * **Cilium RAM Warning (⚠️):** Cilium, especially with all features enabled, can be more resource-intensive than Flannel. The comment warns that control plane nodes might need more than 2GB of RAM (e.g., `cx23` might be tight, consider `cx33`/`cx43` or higher) for Cilium pods to run reliably.
   * **Cilium Customization:** The module allows extensive Cilium configuration via the `cilium_values` block (discussed later).
 
 ```terraform
@@ -2115,7 +2115,7 @@ Locked and loaded! Let's continue the detailed exploration.
   # As for the number of replicas, by default it is set to the number of control plane nodes.
   # You can customized all of the above by adding a rancher_values variable see at the end of this file in the advanced section.
   # After the cluster is deployed, you can always use HelmChartConfig definition to tweak the configuration.
-  # IMPORTANT: Rancher's install is quite memory intensive, you will require at least 4GB if RAM, meaning cx21 server type (for your control plane).
+  # IMPORTANT: Rancher's install is quite memory intensive, you will require at least 4GB if RAM, meaning cx33 server type (for your control plane).
   # ALSO, in order for Rancher to successfully deploy, you have to set the "rancher_hostname".
   # enable_rancher = true
 ```
@@ -2130,7 +2130,7 @@ Locked and loaded! Let's continue the detailed exploration.
     * **SSL Configuration:** Rancher offers options for SSL: Rancher-generated self-signed certs (default), Let's Encrypt, or bringing your own certs. The comment suggests the default self-signed cert is easiest if you put a proxy like Cloudflare (with its own valid cert) in front of Rancher.
     * **Replicas:** Rancher deployment replicas default to the number of control plane nodes for HA.
     * **Customization:** Advanced customization via `rancher_values` block (later).
-    * **Resource Requirements (IMPORTANT):** Rancher is resource-intensive. Control plane nodes need significant RAM (at least 4GB, e.g., Hetzner `cx31`/`cpx21` or higher). Insufficient resources will lead to installation failures or instability.
+    * **Resource Requirements (IMPORTANT):** Rancher is resource-intensive. Control plane nodes need significant RAM (at least 4GB, e.g., Hetzner `cx33`/`cx43` or higher). Insufficient resources will lead to installation failures or instability.
     * **`rancher_hostname` (REQUIRED):** You *must* set `rancher_hostname` if `enable_rancher = true`.
 
 ```terraform
@@ -2691,7 +2691,7 @@ The following variables have been added to the `kube-hetzner` module since the i
   # The NAT router will also function as a bastion. This makes securing the cluster easier, as all public traffic passes through a single strongly secured node.
   # It does however also introduce a single point of failure, so if you need high-availability on your egress, you should consider other configurations.
   # nat_router = {
-  #   server_type = "cx31"
+  #   server_type = "cx33"
   #   location = "fsn1"
   # }
 ```

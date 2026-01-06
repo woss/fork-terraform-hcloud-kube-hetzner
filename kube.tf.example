@@ -98,7 +98,7 @@ module "kube-hetzner" {
   # For instance, one is ok (non-HA), two is not ok, and three is ok (becomes HA). It does not matter if they are in the same nodepool or not! So they can be in different locations and of various types.
 
   # Of course, you can choose any number of nodepools you want, with the location you want. The only constraint on the location is that you need to stay in the same network region, Europe, or the US.
-  # For the server type, the minimum instance supported is cx22. The cax11 provides even better value for money if your applications are compatible with arm64; see https://www.hetzner.com/cloud.
+  # For the server type, the minimum instance supported is cx23. If you want to use arm64 use cax11; see https://www.hetzner.com/cloud.
 
   # IMPORTANT: Before you create your cluster, you can do anything you want with the nodepools, but you need at least one of each, control plane and agent.
   # Once the cluster is up and running, you can change nodepool count and even set it to 0 (in the case of the first control-plane nodepool, the minimum is 1).
@@ -122,7 +122,7 @@ module "kube-hetzner" {
   control_plane_nodepools = [
     {
       name        = "control-plane-fsn1",
-      server_type = "cx22",
+      server_type = "cx23",
       location    = "fsn1",
       labels      = [],
       taints      = [],
@@ -145,7 +145,7 @@ module "kube-hetzner" {
     },
     {
       name        = "control-plane-nbg1",
-      server_type = "cx22",
+      server_type = "cx23",
       location    = "nbg1",
       labels      = [],
       taints      = [],
@@ -165,7 +165,7 @@ module "kube-hetzner" {
     },
     {
       name        = "control-plane-hel1",
-      server_type = "cx22",
+      server_type = "cx23",
       location    = "hel1",
       labels      = [],
       taints      = [],
@@ -188,7 +188,7 @@ module "kube-hetzner" {
   agent_nodepools = [
     {
       name        = "agent-small",
-      server_type = "cx22",
+      server_type = "cx23",
       location    = "fsn1",
       labels      = [],
       taints      = [],
@@ -205,7 +205,7 @@ module "kube-hetzner" {
     },
     {
       name        = "agent-large",
-      server_type = "cx32",
+      server_type = "cx33",
       location    = "nbg1",
       labels      = [],
       taints      = [],
@@ -219,7 +219,7 @@ module "kube-hetzner" {
     },
     {
       name        = "storage",
-      server_type = "cx32",
+      server_type = "cx33",
       location    = "fsn1",
       # Fully optional, just a demo.
       labels      = [
@@ -242,7 +242,7 @@ module "kube-hetzner" {
     # See the https://github.com/kube-hetzner/terraform-hcloud-kube-hetzner#examples for an example use case.
     {
       name        = "egress",
-      server_type = "cx22",
+      server_type = "cx23",
       location    = "fsn1",
       labels = [
         "node.kubernetes.io/role=egress"
@@ -370,7 +370,7 @@ module "kube-hetzner" {
   # autoscaler_nodepools = [
   #  {
   #    name        = "autoscaled-small"
-  #    server_type = "cx32"
+  #    server_type = "cx33"
   #    location    = "fsn1"
   #    # Add the arg --enforce-node-group-min-size=true in the cluster_autoscaler_extra_args option below if you want min_nodes to be effective
   #    min_nodes   = 0
@@ -935,7 +935,7 @@ module "kube-hetzner" {
   # As for the number of replicas, by default it is set to the number of control plane nodes.
   # You can customized all of the above by adding a rancher_values variable see at the end of this file in the advanced section.
   # After the cluster is deployed, you can always use HelmChartConfig definition to tweak the configuration.
-  # IMPORTANT: Rancher's install is quite memory intensive, you will require at least 4GB if RAM, meaning cx21 server type (for your control plane).
+  # IMPORTANT: Rancher's install is quite memory intensive, you will require at least 4GB if RAM, meaning cx33 server type (for your control plane).
   # ALSO, in order for Rancher to successfully deploy, you have to set the "rancher_hostname".
   # enable_rancher = true
 
