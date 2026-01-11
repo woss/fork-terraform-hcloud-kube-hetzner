@@ -211,7 +211,7 @@ resource "null_resource" "autoscaled_nodes_registries" {
 }
 
 resource "null_resource" "autoscaled_nodes_kubelet_config" {
-  for_each = local.autoscaled_nodes
+  for_each = var.k3s_kubelet_config != "" ? local.autoscaled_nodes : {}
   triggers = {
     kubelet_config = var.k3s_kubelet_config
   }

@@ -393,8 +393,9 @@ locals {
   allow_loadbalancer_target_on_control_plane = local.is_single_node_cluster ? true : var.allow_scheduling_on_control_plane
 
   # Default k3s node labels
+  # Note: If you need to exclude agents from CCM-managed LoadBalancer services,
+  # add "node.kubernetes.io/exclude-from-external-load-balancers=true" to your nodepool labels
   default_agent_labels = concat(
-    local.has_external_load_balancer ? [] : ["node.kubernetes.io/exclude-from-external-load-balancers=true"],
     var.automatically_upgrade_k3s ? ["k3s_upgrade=true"] : []
   )
   default_control_plane_labels = concat(local.allow_loadbalancer_target_on_control_plane ? [] : ["node.kubernetes.io/exclude-from-external-load-balancers=true"], var.automatically_upgrade_k3s ? ["k3s_upgrade=true"] : [])
@@ -1017,21 +1018,26 @@ else
   cp /tmp/kubelet-config.yaml /etc/rancher/k3s/kubelet-config.yaml
 
   restart_failed() {
-    echo "Error: Failed to restart k3s service"
+    local SERVICE_NAME="$1"
+    echo "Error: Failed to restart $SERVICE_NAME"
     if [ "$HAS_BACKUP" = true ]; then
       echo "Restoring from backup $BACKUP_FILE"
       cp "$BACKUP_FILE" /etc/rancher/k3s/kubelet-config.yaml
+      echo "Attempting to restart $SERVICE_NAME with restored config..."
+      systemctl restart "$SERVICE_NAME" || echo "Warning: Restart after restore also failed"
     else
       echo "No backup available to restore (first-time config)"
       rm -f /etc/rancher/k3s/kubelet-config.yaml
+      echo "Attempting to restart $SERVICE_NAME without kubelet config..."
+      systemctl restart "$SERVICE_NAME" || echo "Warning: Restart without config also failed"
     fi
     exit 1
   }
 
   if systemctl is-active --quiet k3s; then
-    systemctl restart k3s || restart_failed
+    systemctl restart k3s || restart_failed k3s
   elif systemctl is-active --quiet k3s-agent; then
-    systemctl restart k3s-agent || restart_failed
+    systemctl restart k3s-agent || restart_failed k3s-agent
   else
     echo "Warning: No active k3s or k3s-agent service found, skipping restart"
   fi

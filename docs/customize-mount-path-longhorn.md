@@ -63,6 +63,8 @@ data "kubernetes_nodes" "ssd_nodes" {
 }
 
 # Patch the selected Longhorn nodes to add the new disk
+# IMPORTANT: The "path" value below must match the 'longhorn_mount_path' for the nodes
+# selected by the 'storage=ssd' label.
 resource "null_resource" "longhorn_patch_external_disk" {
   for_each = {
     for node in data.kubernetes_nodes.ssd_nodes.nodes : node.metadata[0].name => node.metadata[0].name
@@ -73,7 +75,7 @@ resource "null_resource" "longhorn_patch_external_disk" {
         "spec": {
           "disks": {
             "external-ssd": {
-              "path": "${local.custom_longhorn_path}", # IMPORTANT: This path must match the 'longhorn_mount_path' for the nodes selected by the 'storage=ssd' label.
+              "path": "${local.custom_longhorn_path}",
               "allowScheduling": true,
               "tags": ["ssd"]
             }
