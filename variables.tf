@@ -197,6 +197,12 @@ variable "load_balancer_health_check_retries" {
   default     = 3
 }
 
+variable "exclude_agents_from_external_load_balancers" {
+  description = "Add node.kubernetes.io/exclude-from-external-load-balancers=true label to agent nodes. Enable this if you use both the Terraform-managed ingress LB and CCM-managed LoadBalancer services, and want to prevent double-registration of agents to the CCM LBs. Note: This excludes agents from ALL CCM-managed LoadBalancer services, not just ingress."
+  type        = bool
+  default     = false
+}
+
 variable "control_plane_nodepools" {
   description = "Number of control plane nodes."
   type = list(object({
