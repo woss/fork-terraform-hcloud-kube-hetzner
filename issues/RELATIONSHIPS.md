@@ -1,7 +1,7 @@
 # Issue & PR Relationships
 
 Generated: 2026-02-01
-Updated: 2026-02-01 (v2.19.0 batch 2 complete - PRs in staging branch awaiting merge to master)
+Updated: 2026-02-01 (v2.19.0 complete - all PRs merged to master, ready for release)
 
 ---
 
@@ -54,7 +54,6 @@ Updated: 2026-02-01 (v2.19.0 batch 2 complete - PRs in staging branch awaiting m
 | #1985 | N/A | N/A | N/A | Feature req |
 | #1984 | ✅ 2.18.4 | ✅ | ✅ | **Good** |
 | #1978 | N/A | N/A | N/A | Feature req |
-| #1972 | N/A | N/A | N/A | Feature req |
 | #1951 | ❌ | ✅ | ❓ | Needs version |
 
 ---
@@ -62,7 +61,7 @@ Updated: 2026-02-01 (v2.19.0 batch 2 complete - PRs in staging branch awaiting m
 ## Issue Action Summary
 
 ### Has PR Ready
-- #1972 → #1971 (network size)
+- (none currently - all pending PRs merged or deferred)
 
 ### Needs Investigation
 - #2023 - eth1 interface (upgrade regression?)
@@ -72,7 +71,8 @@ Updated: 2026-02-01 (v2.19.0 batch 2 complete - PRs in staging branch awaiting m
 ### Recently Fixed (v2.19.0 - Minor Release)
 - #2027 - Flannel wireguard MTU → Added flannel_backend variable
 - #1967 - Upgrade window param → Bumped system-upgrade-controller to v0.18.0
-- PRs merged: #2030, #2029, #2025
+- #1972 - Smaller network sizes → Fixed by #1971
+- PRs merged: #2030, #2029, #2025, #1911, #1825, #2015, #1971, #1903
 
 ### Recently Fixed (v2.18.6 - Patch Release)
 - #1969 - Traefik v34 breaking changes → Fixed via #2028
@@ -106,20 +106,25 @@ Updated: 2026-02-01 (v2.19.0 batch 2 complete - PRs in staging branch awaiting m
 
 | # | Title | Risk Signals | Action |
 |---|-------|--------------|--------|
-| [#1903](../prs/1903-custom-subnet-ranges.md) | Custom subnet ip ranges | Network changes | Individual review |
 | [#1867](../prs/1867-lb-ip-selection.md) | LB IP selection | Load balancer changes | Individual review |
 | [#1760](../prs/1760-tailscale-support.md) | Tailscale support | Deferred - needs generic overlay solution | DEFER |
 | [#1893](../prs/1893-remote-exec-refactor.md) | local-exec to remote-exec | Provisioner changes | Individual review |
 | [#1548](../prs/1548-terraform-data-migration.md) | null_resource to terraform_data | State migration implications | Individual review |
 
+### ✅ Recently Merged (v2.19.0 Minor Batch 3 - 2026-02-01)
+
+| # | Title | Status |
+|---|-------|--------|
+| #1903 | Custom subnet ip ranges | ✅ Merged to master |
+
 ### ✅ Recently Merged (v2.19.0 Minor Batch 2 - 2026-02-01)
 
 | # | Title | Status |
 |---|-------|--------|
-| #1911 | control_plane_endpoint variable | ✅ Merged to staging |
-| #1825 | Audit-log feature | ✅ Merged to staging |
-| #2015 | NAT-router control plane access | ✅ Merged to staging |
-| #1971 | Allow networks smaller than 16 bits | ✅ Merged to staging |
+| #1911 | control_plane_endpoint variable | ✅ Merged to master |
+| #1825 | Audit-log feature | ✅ Merged to master |
+| #2015 | NAT-router control plane access | ✅ Merged to master |
+| #1971 | Allow networks smaller than 16 bits | ✅ Merged to master |
 
 ### ✅ Recently Merged (v2.19.0 Minor Batch 1 - 2026-02-01)
 
@@ -162,18 +167,22 @@ Updated: 2026-02-01 (v2.19.0 batch 2 complete - PRs in staging branch awaiting m
 
 ### 🏷️ Minor Release Candidates (Individual Approval Required)
 
-**v2.19.0 Minor Release - Batch 2 Complete:**
+**v2.19.0 Minor Release - Complete:**
 - ✅ #1911 - control_plane_endpoint (merged)
 - ✅ #2015 - NAT-router CP access (merged)
 - ✅ #1825 - Audit-log feature (merged)
 - ✅ #1971 - Smaller networks (merged, fixes #1972)
+- ✅ #1903 - Custom subnet ranges (merged)
+- ✅ #2030 - Default k3s version bump (merged)
+- ✅ #2029 - k3s 1.35 support (merged)
+- ✅ #2025 - Autoscaler config options (merged)
 - ⏸️ #1760 - Tailscale support (deferred - needs generic overlay solution)
+- ⏸️ #1867 - LB IP selection (deferred - too large for this release)
 
 Remaining candidates for future minor releases:
 
 | # | Title | New Feature | Status |
 |---|-------|-------------|--------|
-| #1903 | Custom subnet ranges | Network feature | Ready for review |
 | #1867 | LB IP selection | LB feature | Ready for review |
 
 ### 🏷️ Major Release Only (DO NOT MIX WITH REGULAR TRIAGE)
@@ -215,14 +224,14 @@ PRs that directly fix issues:
 | ~~#2021~~ | ~~PR~~ | ~~Fix datacenter attribute~~ | ~~v2.18.6~~ | ✅ Merged |
 | ~~#2014~~ | ~~PR~~ | ~~Disable root when sudo~~ | ~~Earlier~~ | ✅ Merged |
 
-### Network Architecture (3 items remaining)
+### Network Architecture (2 items remaining)
 | # | Type | Title | Release | Risk |
 |---|------|-------|---------|------|
 | ~~#1972~~ | ~~Issue~~ | ~~Remove hardcoded network size~~ | ~~v2.19.0~~ | ✅ Fixed by #1971 |
 | #1988 | Issue | Stable nodepool keys | - | MAJOR only |
 | ~~#1971~~ | ~~PR~~ | ~~Smaller networks~~ | ~~v2.19.0~~ | ✅ Merged |
-| #1903 | PR | Custom subnet ranges | MINOR | 🟡 |
-| #1867 | PR | LB IP selection | PATCH | 🟡 |
+| ~~#1903~~ | ~~PR~~ | ~~Custom subnet ranges~~ | ~~v2.19.0~~ | ✅ Merged |
+| #1867 | PR | LB IP selection | Future MINOR | 🟡 |
 
 ### Packer/OS (5 items)
 | # | Type | Title | Release | Risk |
