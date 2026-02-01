@@ -79,7 +79,7 @@ locals {
   )
 }
 
-resource "null_resource" "first_control_plane" {
+resource "terraform_data" "first_control_plane" {
   connection {
     user           = "root"
     private_key    = var.ssh_private_key
@@ -177,6 +177,10 @@ resource "null_resource" "first_control_plane" {
     hcloud_network_subnet.control_plane
   ]
 }
+moved {
+  from = null_resource.first_control_plane
+  to   = terraform_data.first_control_plane
+}
 
 # Needed for rancher setup
 resource "random_password" "rancher_bootstrap" {
@@ -185,8 +189,8 @@ resource "random_password" "rancher_bootstrap" {
   special = false
 }
 
-resource "null_resource" "kube_system_secrets" {
-  triggers = {
+resource "terraform_data" "kube_system_secrets" {
+  triggers_replace = {
     secrets_sha = sha256(yamlencode(local.kube_system_secrets))
   }
 
@@ -247,13 +251,17 @@ resource "null_resource" "kube_system_secrets" {
 
   depends_on = [
     hcloud_load_balancer.cluster,
-    null_resource.control_planes,
+    terraform_data.control_planes,
   ]
+}
+moved {
+  from = null_resource.kube_system_secrets
+  to   = terraform_data.kube_system_secrets
 }
 
 # This is where all the setup of Kubernetes components happen
-resource "null_resource" "kustomization" {
-  triggers = {
+resource "terraform_data" "kustomization" {
+  triggers_replace = {
     # Redeploy helm charts when the underlying values change
     helm_values_yaml = join("---\n", [
       local.traefik_values,
@@ -552,9 +560,13 @@ resource "null_resource" "kustomization" {
 
   depends_on = [
     hcloud_load_balancer.cluster,
-    null_resource.control_planes,
+    terraform_data.control_planes,
     random_password.rancher_bootstrap,
     hcloud_volume.longhorn_volume,
-    null_resource.kube_system_secrets
+    terraform_data.kube_system_secrets
   ]
+}
+moved {
+  from = null_resource.kustomization
+  to   = terraform_data.kustomization
 }

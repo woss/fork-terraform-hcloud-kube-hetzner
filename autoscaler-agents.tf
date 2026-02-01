@@ -57,10 +57,10 @@ locals {
   }
 }
 
-resource "null_resource" "configure_autoscaler" {
+resource "terraform_data" "configure_autoscaler" {
   count = length(var.autoscaler_nodepools) > 0 ? 1 : 0
 
-  triggers = {
+  triggers_replace = {
     template = local.autoscaler_yaml
   }
   connection {
@@ -90,11 +90,15 @@ resource "null_resource" "configure_autoscaler" {
 
   depends_on = [
     hcloud_load_balancer.cluster,
-    null_resource.control_planes,
+    terraform_data.control_planes,
     random_password.rancher_bootstrap,
     hcloud_volume.longhorn_volume,
     data.hcloud_image.microos_x86_snapshot
   ]
+}
+moved {
+  from = null_resource.configure_autoscaler
+  to   = terraform_data.configure_autoscaler
 }
 
 data "cloudinit_config" "autoscaler_config" {
@@ -187,9 +191,9 @@ data "hcloud_servers" "autoscaled_nodes" {
   with_selector = "hcloud/node-group=${local.cluster_prefix}${each.value}"
 }
 
-resource "null_resource" "autoscaled_nodes_registries" {
+resource "terraform_data" "autoscaled_nodes_registries" {
   for_each = local.autoscaled_nodes
-  triggers = {
+  triggers_replace = {
     registries = var.k3s_registries
   }
 
@@ -216,10 +220,14 @@ resource "null_resource" "autoscaled_nodes_registries" {
     inline = [local.k3s_registries_update_script]
   }
 }
+moved {
+  from = null_resource.autoscaled_nodes_registries
+  to   = terraform_data.autoscaled_nodes_registries
+}
 
-resource "null_resource" "autoscaled_nodes_kubelet_config" {
+resource "terraform_data" "autoscaled_nodes_kubelet_config" {
   for_each = var.k3s_kubelet_config != "" ? local.autoscaled_nodes : {}
-  triggers = {
+  triggers_replace = {
     kubelet_config = var.k3s_kubelet_config
   }
 
@@ -244,4 +252,8 @@ resource "null_resource" "autoscaled_nodes_kubelet_config" {
   provisioner "remote-exec" {
     inline = [local.k3s_kubelet_config_update_script]
   }
+}
+moved {
+  from = null_resource.autoscaled_nodes_kubelet_config
+  to   = terraform_data.autoscaled_nodes_kubelet_config
 }

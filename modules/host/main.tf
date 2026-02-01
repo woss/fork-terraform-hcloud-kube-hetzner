@@ -96,8 +96,8 @@ resource "hcloud_server" "server" {
 
 }
 
-resource "null_resource" "registries" {
-  triggers = {
+resource "terraform_data" "registries" {
+  triggers_replace = {
     registries = var.k3s_registries
   }
 
@@ -126,11 +126,15 @@ resource "null_resource" "registries" {
 
   depends_on = [hcloud_server.server]
 }
+moved {
+  from = null_resource.registries
+  to   = terraform_data.registries
+}
 
-resource "null_resource" "kubelet_config" {
+resource "terraform_data" "kubelet_config" {
   count = var.k3s_kubelet_config != "" ? 1 : 0
 
-  triggers = {
+  triggers_replace = {
     kubelet_config = var.k3s_kubelet_config
   }
 
@@ -158,11 +162,15 @@ resource "null_resource" "kubelet_config" {
 
   depends_on = [hcloud_server.server]
 }
+moved {
+  from = null_resource.kubelet_config
+  to   = terraform_data.kubelet_config
+}
 
-resource "null_resource" "audit_policy" {
+resource "terraform_data" "audit_policy" {
   count = var.k3s_audit_policy_config != "" ? 1 : 0
 
-  triggers = {
+  triggers_replace = {
     audit_policy = var.k3s_audit_policy_config
   }
 
@@ -189,6 +197,10 @@ resource "null_resource" "audit_policy" {
   }
 
   depends_on = [hcloud_server.server]
+}
+moved {
+  from = null_resource.audit_policy
+  to   = terraform_data.audit_policy
 }
 
 resource "hcloud_rdns" "server" {
@@ -233,8 +245,8 @@ data "cloudinit_config" "config" {
   }
 }
 
-resource "null_resource" "zram" {
-  triggers = {
+resource "terraform_data" "zram" {
+  triggers_replace = {
     zram_size = var.zram_size
   }
 
@@ -318,9 +330,14 @@ WantedBy=multi-user.target
   depends_on = [hcloud_server.server]
 }
 
+moved {
+  from = null_resource.zram
+  to   = terraform_data.zram
+}
+
 # Resource to toggle transactional-update.timer based on automatically_upgrade_os setting
-resource "null_resource" "os_upgrade_toggle" {
-  triggers = {
+resource "terraform_data" "os_upgrade_toggle" {
+  triggers_replace = {
     os_upgrade_state = var.automatically_upgrade_os ? "enabled" : "disabled"
     server_id        = hcloud_server.server.id
   }
@@ -355,6 +372,11 @@ resource "null_resource" "os_upgrade_toggle" {
 
   depends_on = [
     hcloud_server.server,
-    null_resource.registries
+    terraform_data.registries
   ]
+}
+
+moved {
+  from = null_resource.os_upgrade_toggle
+  to   = terraform_data.os_upgrade_toggle
 }

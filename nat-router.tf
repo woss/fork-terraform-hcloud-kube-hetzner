@@ -93,7 +93,7 @@ resource "hcloud_server" "nat_router" {
 
 }
 
-resource "null_resource" "nat_router_await_cloud_init" {
+resource "terraform_data" "nat_router_await_cloud_init" {
   count = var.nat_router != null ? 1 : 0
 
   depends_on = [
@@ -101,7 +101,7 @@ resource "null_resource" "nat_router_await_cloud_init" {
     hcloud_server.nat_router,
   ]
 
-  triggers = {
+  triggers_replace = {
     config = data.cloudinit_config.nat_router_config[0].rendered
   }
 
@@ -117,4 +117,8 @@ resource "null_resource" "nat_router_await_cloud_init" {
     inline = ["cloud-init status --wait > /dev/null || echo 'Ready to move on'"]
     # on_failure = continue # this will fail because the reboot 
   }
+}
+moved {
+  from = null_resource.nat_router_await_cloud_init
+  to   = terraform_data.nat_router_await_cloud_init
 }
