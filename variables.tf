@@ -1117,7 +1117,7 @@ variable "block_icmp_ping_in" {
 variable "use_control_plane_lb" {
   type        = bool
   default     = false
-  description = "When this is enabled, rather than the first node, all external traffic will be routed via a control-plane loadbalancer, allowing for high availability."
+  description = "Creates a dedicated load balancer for the Kubernetes API (port 6443). When enabled, kubectl and other API clients connect through this LB instead of directly to the first control plane node. Recommended for production clusters with multiple control plane nodes for high availability. Note: This is separate from the ingress load balancer for HTTP/HTTPS traffic."
 }
 
 variable "control_plane_lb_type" {
