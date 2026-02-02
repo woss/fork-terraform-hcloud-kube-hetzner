@@ -69,24 +69,52 @@ To achieve this, we built up on the shoulders of giants by choosing [openSUSE Mi
 
 ### Features
 
-- [x] **Maintenance-free** with auto-upgrades to the latest version of MicroOS and k3s.
-- [x] **Multi-architecture support**, choose any Hetzner cloud instances, including the cheaper CAX ARM instances.
-- [x] Proper use of the **Hetzner private network** to minimize latency.
-- [x] Choose between **Flannel, Calico, or Cilium** as CNI.
-- [x] Optional **Wireguard** encryption of the Kube network for added security.
-- [x] **Traefik**, **Nginx** or **HAProxy** as ingress controller attached to a Hetzner load balancer with Proxy Protocol turned on.
-- [x] **Automatic HA** with the default setting of three control-plane nodes and two agent nodes.
-- [x] **Autoscaling** nodes via the [kubernetes autoscaler](https://github.com/kubernetes/autoscaler).
-- [x] **Super-HA** with Nodepools for both control-plane and agent nodes that can be in different locations.
-- [x] Possibility to have a **single node cluster** with a proper ingress controller.
-- [x] Can use Klipper as an **on-metal LB** or the **Hetzner LB**.
-- [x] Ability to **add nodes and nodepools** when the cluster is running.
-- [x] Possibility to toggle **Longhorn** and **Hetzner CSI**.
-- [x] Encryption at rest fully functional in both **Longhorn** and **Hetzner CSI**.
-- [x] Optional use of **Floating IPs** for use via Cilium's Egress Gateway.
-- [x] Proper IPv6 support for inbound/outbound traffic.
-- [x] **Flexible configuration options** via variables and an extra Kustomization option.
-- [x] Ability to add Hetzner "Robot" / Dedicated servers as nodes
+#### 🚀 Core Platform
+- [x] **Maintenance-free** — Auto-upgrades to the latest MicroOS and k3s versions with automatic rollback on failure
+- [x] **Multi-architecture** — Mix x86 and ARM (CAX) instances in the same cluster for cost optimization
+- [x] **Private networking** — Leverages Hetzner's private network for low-latency, secure node communication
+- [x] **SELinux hardened** — Comprehensive security policies pre-configured for k3s workloads
+
+#### 🌐 Networking & CNI
+- [x] **CNI flexibility** — Choose between **Flannel**, **Calico**, or **Cilium** with easy switching
+- [x] **Cilium XDP acceleration** — Hardware-level load balancing for maximum performance
+- [x] **Wireguard encryption** — Optional encrypted overlay network for enhanced security
+- [x] **Configurable Flannel backend** — Wireguard-native, host-gw, VXLAN, and more
+- [x] **IPv4 & IPv6** — Full dual-stack support for inbound and outbound traffic
+- [x] **Custom subnet ranges** — Define specific CIDR blocks per nodepool
+
+#### ⚖️ Load Balancing & Ingress
+- [x] **Ingress controllers** — **Traefik**, **Nginx**, or **HAProxy** with Hetzner LB and Proxy Protocol
+- [x] **Flexible LB options** — Hetzner Load Balancer or Klipper for on-metal deployments
+- [x] **Control plane endpoint** — Custom API endpoint for external load balancers or DNS
+
+#### 🔄 High Availability & Scaling
+- [x] **Automatic HA** — Default 3 control-plane + 2 agent nodes across availability zones
+- [x] **Super-HA** — Nodepools spread across multiple Hetzner locations (fsn1, nbg1, hel1, etc.)
+- [x] **Cluster autoscaler** — Automatic node scaling with configurable resource limits
+- [x] **Single-node mode** — Perfect for development with full ingress support
+- [x] **Live scaling** — Add/remove nodes and nodepools without downtime
+
+#### 💾 Storage
+- [x] **Hetzner CSI** — Native block storage with encryption at rest
+- [x] **Longhorn** — Distributed storage with replication and encryption
+- [x] **Customizable mount paths** — Configure Longhorn storage locations
+
+#### 🔒 Security & Compliance
+- [x] **Audit logging** — Kubernetes audit logs with configurable retention policies
+- [x] **Firewall rules** — Granular control over SSH and API access
+- [x] **Floating IPs** — Cilium Egress Gateway support for static outbound IPs
+
+#### 🌍 Private & Hybrid Clusters
+- [x] **NAT router** — Run fully private clusters with automatic API forwarding
+- [x] **Robot server integration** — Add Hetzner dedicated servers via vSwitch
+- [x] **Smaller networks** — Support for network sizes smaller than /16
+
+#### 🛠️ Operations & Flexibility
+- [x] **190+ configuration variables** — Fine-tune every aspect of your cluster
+- [x] **Kustomization support** — Extend with custom manifests and Helm charts
+- [x] **Terraform Stacks compatible** — Works with HashiCorp's latest orchestration
+- [x] **OpenTofu support** — Use the open-source Terraform alternative
 
 _It uses Terraform to deploy as it's easy to use, and Hetzner has a great [Hetzner Terraform Provider](https://registry.terraform.io/providers/hetznercloud/hcloud/latest/docs)._
 
