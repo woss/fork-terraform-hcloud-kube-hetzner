@@ -37,37 +37,41 @@ If you created a NAT router **before v2.19.0** (when the hcloud provider used th
    terraform apply
    ```
 
-**Note**: Most users (those without NAT router, or who created it recently) are unaffected.
+#### Version Requirements
+
+- Minimum Terraform version: `1.10.1`
+- Minimum hcloud provider version: `1.59.0`
 
 ### 🚀 New Features
 
-- **Robot server integration** - Manage Hetzner Robot dedicated servers via Terraform (#1916)
-- **Audit logging support** - Enable Kubernetes audit logs with configurable policy (#1825)
-- **Control plane endpoint variable** - Customize the k3s control plane endpoint (#1911)
-- **NAT-router control plane access** - Access control plane through NAT router when LB has no public IP (#2015)
-- **Custom subnet IP ranges** - Define custom IP ranges for control plane and agent subnets (#1903)
-- **Smaller network support** - Networks smaller than /16 now supported (#1971)
-- **K3s v1.35 support** - Added support for k3s v1.35 channel (#2029)
-- **Autoscaler configuration options** - Configurable replicas and resources for cluster autoscaler (#2025)
-- **Autoscaler swap/zram support** - Configure swap and zram sizes for autoscaler nodepools (#2008)
-- **Packer kernel type** - Configurable kernel type in packer builds (#2009)
-- **Packer sysctl config** - Custom sysctl configuration file variable (#2010)
+- **Hetzner Robot Integration** - Manage dedicated Robot servers via vSwitch and Cloud Controller Manager. New variables: `robot_ccm_enabled`, `robot_user`, `robot_password`, `vswitch_id`, `vswitch_subnet_index` (#1916)
+- **Audit Logging** - Kubernetes audit logs with configurable policy via `k3s_audit_policy_config` and log rotation settings (#1825)
+- **Control Plane Endpoint** - New `control_plane_endpoint` variable for stable external API server endpoint (e.g., external load balancers) (#1911)
+- **NAT Router Control Plane Access** - Automatic port 6443 forwarding on NAT router when `control_plane_lb_enable_public_interface` is false (#2015)
+- **Smaller Networks** - New `subnet_amount` variable enables networks smaller than /16 (#1971)
+- **Custom Subnet Ranges** - Added `subnet_ip_range` to agent_nodepools for manual CIDR assignment (#1903)
+- **Autoscaler Swap/ZRAM** - Added `swap_size` and `zram_size` support for autoscaler node pools (#2008)
+- **Autoscaler Resources** - New `cluster_autoscaler_replicas`, `cluster_autoscaler_resource_limits`, `cluster_autoscaler_resource_values` (#2025)
+- **Flannel Backend** - New `flannel_backend` variable to override flannel backend (wireguard-native, host-gw, etc.)
+- **Cilium XDP Acceleration** - New `cilium_loadbalancer_acceleration_mode` variable (native, best-effort, disabled)
+- **K3s v1.35 Support** - Added support for k3s v1.35 channel (#2029)
+- **Packer Enhancements** - Configurable `kernel_type`, `sysctl_config_file`, and `timezone` for MicroOS snapshots (#2009, #2010)
 
 ### 🐛 Bug Fixes
 
-- **SELinux policy YAML parsing** - Fixed cloud-init SCHEMA_ERROR caused by improper YAML formatting of SELinux policy file
-- **Missing SELinux rules** - Added rules for JuiceFS (sock_file write) and SigNoz (blk_file getattr)
-- **NAT router deprecation warning** - Removed deprecated `datacenter` from lifecycle ignore_changes
-- **Traefik v34 config** - Fixed compatibility with Traefik chart v34 (#2028)
-- **NAT router datacenter** - Fixed datacenter attribute deprecation (#2021)
-- **kured_version null** - Fixed null handling for kured version (#2032)
+- **Traefik v34 Compatibility** - Fixed HTTP to HTTPS redirection config for Traefik Helm Chart v34+ (#2028)
+- **NAT Router IP Drift** - Fixed infinite replacement cycle by migrating from deprecated `datacenter` to `location` (#2021)
+- **SELinux YAML Parsing** - Fixed cloud-init SCHEMA_ERROR caused by improper YAML formatting of SELinux policy
+- **SELinux Missing Rules** - Added rules for JuiceFS (sock_file write) and SigNoz (blk_file getattr)
+- **Kured Version Null** - Fixed potential null value issues with `kured_version` logic (#2032)
 
 ### 🔧 Changes
 
-- **Default k3s version** - Bumped from v1.31 to v1.33 (#2030)
-- **SELinux policy extraction** - Moved SELinux policy to dedicated template file for maintainability
-- **terraform_data migration** - Migrated from null_resource to terraform_data (#1548)
-- **remote-exec refactor** - Improved provisioner compatibility with Terraform Stacks (#1893)
+- **Default K3s Version** - Bumped from v1.31 to v1.33 (#2030)
+- **Default System Upgrade Controller** - Bumped to v0.18.0
+- **SELinux Policy Extraction** - Moved to dedicated template file for maintainability
+- **terraform_data Migration** - Migrated from null_resource to terraform_data with automatic state migration (#1548)
+- **remote-exec Refactor** - Improved provisioner compatibility with Terraform Stacks (#1893)
 
 ---
 
@@ -83,4 +87,4 @@ If you created a NAT router **before v2.19.0** (when the hcloud provider used th
 
 ## [2.18.5] - 2026-01-15
 
-_See GitHub releases for earlier versions._
+_See [GitHub releases](https://github.com/kube-hetzner/terraform-hcloud-kube-hetzner/releases) for earlier versions._
