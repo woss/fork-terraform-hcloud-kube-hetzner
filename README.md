@@ -30,7 +30,7 @@ A highly optimized, easy-to-use, auto-upgradable Kubernetes cluster powered by k
 <td width="50%" valign="top">
 
 **🤖 KH Assistant**<br>
-<a href="https://chatgpt.com/g/g-67df95cd1e0c8191baedfa3179061581-kh-assistant">Custom GPT</a> or <code>/kh-assistant</code> skill in any <a href="https://agentskills.io">coding agent</a><br>
+<a href="https://chatgpt.com/g/g-67df95cd1e0c8191baedfa3179061581-kh-assistant">Custom GPT</a> or <code>/kh-assistant</code> <a href="https://github.com/mysticaltech/terraform-hcloud-kube-hetzner/tree/master/.claude/skills/kh-assistant">skill</a><br>
 AI-powered config generation & debugging!
 
 </td>
