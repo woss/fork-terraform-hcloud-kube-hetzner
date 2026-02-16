@@ -21,14 +21,6 @@ A highly optimized, easy-to-use, auto-upgradable Kubernetes cluster powered by k
 
 <table>
 <tr>
-<td align="center" colspan="2">
-
-**Sponsored by**<br><br>
-<a href="https://www.hetzner.com"><img src="https://github.com/kube-hetzner/terraform-hcloud-kube-hetzner/raw/master/.images/hetzner-logo.svg" alt="Hetzner — Server · Cloud · Hosting" height="45"></a>
-
-</td>
-</tr>
-<tr>
 <td width="50%" valign="top">
 
 **💖 Love this project?**<br>
@@ -1150,9 +1142,15 @@ Your sponsorship directly funds:
 
 ## 🙏 Acknowledgements
 
+<div align="center">
+<a href="https://www.hetzner.com"><img src="https://github.com/kube-hetzner/terraform-hcloud-kube-hetzner/raw/master/.images/hetzner-logo.svg" alt="Hetzner — Server · Cloud · Hosting" height="55"></a>
+<br><br>
+</div>
+
+Thanks to **[Hetzner](https://www.hetzner.com)** for supporting this project with cloud credits.
+
 - **[k-andy](https://github.com/StarpTech/k-andy)** — The starting point for this project
 - **[Best-README-Template](https://github.com/othneildrew/Best-README-Template)** — README inspiration
-- **[Hetzner Cloud](https://www.hetzner.com)** — Project sponsor and outstanding infrastructure provider
 - **[HashiCorp](https://www.hashicorp.com)** — The amazing Terraform framework
 - **[Rancher](https://www.rancher.com)** — k3s, the heart of this project
 - **[openSUSE](https://www.opensuse.org)** — MicroOS, next-level container OS
