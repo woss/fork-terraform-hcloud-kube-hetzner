@@ -397,6 +397,64 @@ def assert_agent_extra_firewall_ids_contract(scratch: "TerraformScratch") -> Non
     )
 
 
+def assert_hcloud_ssh_key_selector_contract(scratch: "TerraformScratch") -> None:
+    """Reject unsupported label-selected keys before node bootstrap."""
+
+    source = VALIDATION_CONTRACT_TF.read_text(encoding="utf-8")
+    normalized = normalize_hcl(source)
+    required_fragments = (
+        "alltrue([",
+        "forkeyintry(data.hcloud_ssh_keys.keys_by_selector[0].ssh_keys,[]):",
+        "trimspace(key.public_key)",
+        "ssh_hcloud_key_labelselectedakeywithanunsupportedormalformedOpenSSHpublickey",
+    )
+    missing = [fragment for fragment in required_fragments if fragment not in normalized]
+    if missing:
+        fail("HCloud SSH key selector", f"missing fail-fast validation fragments: {missing!r}")
+
+    pattern_match = re.search(
+        r"for\s+key\s+in\s+try\(data\.hcloud_ssh_keys\.keys_by_selector\[0\]\.ssh_keys,\s*\[\]\)\s*:\s*"
+        r"can\(regex\(\s*(\"(?:\\.|[^\"\\])*\")",
+        source,
+    )
+    if pattern_match is None:
+        fail("HCloud SSH key selector", "could not extract the production public-key pattern")
+    pattern = json.loads(pattern_match.group(1))
+
+    valid_keys = (
+        "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQValid comment",
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIValid",
+        "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIValid",
+        "sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tValid",
+    )
+    invalid_keys = (
+        "ssh-dss AAAAB3NzaC1kc3MAAACBAInvalid",
+        "ssh-ed25519-cert-v01@openssh.com AAAAHHNzaC1lZDI1NTE5LWNlcnQtdjAxInvalid",
+        "sk-ssh-ed25519@opensshXcom AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tInvalid",
+        "not-a-public-key",
+        "ssh-ed25519 invalid-body!",
+        "ssh-ed25519 AAAAValid\nsecond-line",
+    )
+
+    def evaluate(keys: tuple[str, ...]) -> list[bool]:
+        encoded = scratch.console(
+            f"jsonencode([for key in {hcl_value(keys)} : can(regex({hcl_value(pattern)}, trimspace(key)))])"
+        )
+        return json.loads(json.loads(encoded))
+
+    valid_results = evaluate(valid_keys)
+    invalid_results = evaluate(invalid_keys)
+    if valid_results != [True] * len(valid_keys):
+        fail("HCloud SSH key selector", f"supported key results were {valid_results!r}")
+    if invalid_results != [False] * len(invalid_keys):
+        fail("HCloud SSH key selector", f"unsupported key results were {invalid_results!r}")
+
+    print_pass(
+        "HCloud SSH key selector",
+        "validates selector-derived keys at plan time with the production key-type contract",
+    )
+
+
 def assert_calico_kustomization_contract() -> None:
     """Apply the Calico patch only to the upstream k3s manifest path."""
 
@@ -1928,7 +1986,16 @@ esac
 case "$*" in
   *--interface*) exit 0 ;;
 esac
-[ "${KH_ROUTE_MODE:-healthy}" = "healthy" ]
+case "${KH_ROUTE_MODE:-healthy}" in
+  healthy) exit 0 ;;
+  transient)
+    ATTEMPT=$(cat "$KH_ROUTE_CURL_COUNT" 2>/dev/null || printf '0')
+    ATTEMPT=$((ATTEMPT + 1))
+    printf '%s\n' "$ATTEMPT" > "$KH_ROUTE_CURL_COUNT"
+    [ "$ATTEMPT" -ge 3 ]
+    ;;
+  *) exit 1 ;;
+esac
 """,
             encoding="utf-8",
         )
@@ -1938,10 +2005,13 @@ esac
 
         def simulate(mode: str) -> tuple[subprocess.CompletedProcess[str], str]:
             log_path.write_text("", encoding="utf-8")
+            curl_count_path = temp_dir / "curl-count"
+            curl_count_path.unlink(missing_ok=True)
             env = os.environ.copy()
             env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
             env["KH_ROUTE_MODE"] = mode
             env["KH_ROUTE_LOG"] = str(log_path)
+            env["KH_ROUTE_CURL_COUNT"] = str(curl_count_path)
             result = subprocess.run(
                 ["bash"],
                 input=script,
@@ -1955,6 +2025,10 @@ esac
         healthy, healthy_log = simulate("healthy")
         if healthy.returncode != 0 or healthy_log:
             fail(label, f"healthy metadata path must not mutate routes; rc={healthy.returncode}, mutations={healthy_log!r}")
+
+        transient, transient_log = simulate("transient")
+        if transient.returncode != 0 or transient_log:
+            fail(label, f"transient metadata failure must recover without route mutation; rc={transient.returncode}, mutations={transient_log!r}")
 
         direct, direct_log = simulate("stale")
         if direct.returncode != 0:
@@ -2631,6 +2705,7 @@ def main() -> int:
         assert_agent_floating_ip_config_contract()
         assert_agent_private_ipv4_contract(scratch)
         assert_agent_extra_firewall_ids_contract(scratch)
+        assert_hcloud_ssh_key_selector_contract(scratch)
         assert_autoscaler_network_env_contract()
         assert_autoscaler_user_data_limit_contract()
         assert_calico_kustomization_contract()

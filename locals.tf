@@ -782,14 +782,17 @@ PUBLIC_GW=172.31.1.1
 METADATA_METRIC=100
 DESIRED_ROUTE="$METADATA_IP/32 $PUBLIC_GW $METADATA_METRIC"
 
-# Healthy public nodes need no profile or runtime-route mutation. This also
-# keeps the repair out of the critical bootstrap path when metadata already
-# works through the image's normal network configuration.
-if curl -fsS --connect-timeout 2 --max-time 5 \
-  "http://$METADATA_IP/hetzner/v1/metadata/instance-id" >/dev/null; then
-  echo "Hetzner metadata is already reachable; no route repair needed."
-  exit 0
-fi
+# Healthy public nodes need no profile or runtime-route mutation. Retry briefly
+# so one transient metadata response cannot trigger an unnecessary profile
+# rewrite on an otherwise healthy node.
+for ATTEMPT in 1 2 3; do
+  if curl -fsS --connect-timeout 2 --max-time 5 \
+    "http://$METADATA_IP/hetzner/v1/metadata/instance-id" >/dev/null; then
+    echo "Hetzner metadata is already reachable; no route repair needed."
+    exit 0
+  fi
+  [ "$ATTEMPT" -eq 3 ] || sleep 1
+done
 
 # The public gateway is valid only when it is directly connected. A route that
 # contains "via" is an indirect private/default path and must never be treated
@@ -4056,9 +4059,9 @@ cloudinit_runcmd_common = <<EOT
 # Disable rebootmgr service as we use kured instead
 - [systemctl, disable, '--now', 'rebootmgr.service']
 
-# Disable transactional updates during first boot. The host module re-enables
-# the timer after provisioning when automatically_upgrade_os is true; keeping it
-# active during cloud-init can race Kubernetes bootstrap on Leap Micro.
+# Disable transactional updates during first boot. The root module reconciles
+# the requested timer state after Kubernetes installation; keeping it active
+# during cloud-init can race Kubernetes bootstrap on Leap Micro.
 - |
   systemctl disable --now transactional-update.timer || true
   systemctl stop transactional-update.service || true

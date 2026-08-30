@@ -22,6 +22,17 @@ resource "terraform_data" "validation_contract" {
   input = true
 
   lifecycle {
+    precondition {
+      condition = alltrue([
+        for key in try(data.hcloud_ssh_keys.keys_by_selector[0].ssh_keys, []) :
+        can(regex(
+          "^(ssh-(rsa|ed25519)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh[.]com) [A-Za-z0-9+/=]+( [^\\r\\n]*)?$",
+          trimspace(key.public_key)
+        ))
+      ])
+      error_message = "ssh_hcloud_key_label selected a key with an unsupported or malformed OpenSSH public key. Use RSA, Ed25519, ECDSA NIST P-256/P-384/P-521, or OpenSSH FIDO keys."
+    }
+
     # Shared subnet mode pins one dense IP per primary-network agent inside the
     # single shared agent subnet; the highest host offset must fit the subnet,
     # or cidrhost() would fail mid-plan with an opaque error (#2240 review).
