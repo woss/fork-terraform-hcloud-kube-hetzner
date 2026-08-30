@@ -143,41 +143,13 @@ resource "terraform_data" "initial_readiness" {
   }
 }
 
+# Preserve the historical state address. The parent module reconciles the
+# timer after Kubernetes starts, alongside health-checker.service.
 resource "terraform_data" "os_upgrade_timer" {
   triggers_replace = {
     server_id                = hcloud_server.server.id
     automatically_upgrade_os = tostring(var.automatically_upgrade_os)
   }
-
-  connection {
-    user           = "root"
-    private_key    = var.ssh_private_key
-    agent_identity = local.ssh_agent_identity
-    host           = local.provisioner_connection_host
-    port           = var.ssh_port
-
-    bastion_host        = var.ssh_bastion.bastion_host
-    bastion_port        = var.ssh_bastion.bastion_port
-    bastion_user        = var.ssh_bastion.bastion_user
-    bastion_private_key = var.ssh_bastion.bastion_private_key
-
-    timeout = "10m"
-  }
-
-  provisioner "remote-exec" {
-    inline = var.automatically_upgrade_os ? [
-      <<-EOT
-      echo "Automatic OS updates are enabled"
-      EOT
-      ] : [
-      <<-EOT
-      echo "Automatic OS updates are disabled"
-      systemctl --now disable transactional-update.timer
-      EOT
-    ]
-  }
-
-  depends_on = [terraform_data.initial_readiness]
 }
 
 resource "hcloud_server_network" "extra_networks" {

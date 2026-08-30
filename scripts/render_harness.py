@@ -1720,6 +1720,8 @@ def assert_static_os_update_service_ordering_contract() -> None:
             fail(label, f"missing post-install ordering fragment {fragment!r}")
     if "systemctlunmaskhealth-checker.service" in host_source:
         fail(label, "the child host module still restores update services before Kubernetes bootstrap")
+    if "transactional-update.timer" in host_source:
+        fail(label, "the child host module still changes the update timer before Kubernetes bootstrap")
     print_pass(label, "static service restoration runs only after the root Kubernetes install resources")
 
 
