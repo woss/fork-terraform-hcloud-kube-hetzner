@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### ⚠️ Upgrade Notes
 
+- **Force cleanup scope and timeout:** `cleanupkh` now treats the HCloud project selected by the Terraform token as dedicated to one cluster and proposes deleting every runtime resource in that project, including unrelated resources. It defaults to a dry run; persistent data remains opt-in. Existing v3.1.0 K3s and RKE2 clusters also show an expected in-place update to the ingress load balancer destroy-cleanup `terraform_data` on the next apply. That apply must persist the new 45-second SSH timeout before a later destroy can use it.
 - **Additional firewall ownership:** `extra_firewall_ids` are authoritative through each module-managed server. If the same server/firewall relationship is currently managed by a standalone `hcloud_firewall_attachment`, follow the state-only ownership handoff in [`docs/operations.md`](docs/operations.md#handoff-an-existing-firewall-attachment) before applying; two Terraform resources must not manage the same attachment.
 - **Label-selected SSH keys:** every key matched by `ssh_hcloud_key_label` must be a valid RSA, Ed25519, ECDSA NIST P-256/P-384/P-521, or OpenSSH FIDO public key. Unsupported legacy DSA keys, OpenSSH certificates, and malformed key lines now fail during plan instead of failing node bootstrap.
 - **Existing autoscaler nodes:** new autoscaler nodes restore both `health-checker.service` and the configured `transactional-update.timer` state after bootstrap. Existing autoscaler nodes retain their original cloud-init; use the in-place service repair in [`docs/operations.md`](docs/operations.md#repair-existing-autoscaler-update-services) or recycle them gradually. Static nodes are repaired automatically on the next apply. Restoring `health-checker.service` also restores the next-boot transactional snapshot health validation and automatic rollback semantics that are deliberately suppressed during first-boot Kubernetes provisioning.
@@ -35,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 🔧 Changes
 
+- Rebuilt `cleanupkh` as a fail-closed, project-aware CLI. It ignores ambient HCloud credentials, pins every API call to the Terraform token, verifies and activates the cluster-named context, inventories all runtime resources and snapshots before mutation, filters empty CLI rows, handles delete protection, separates persistent-data choices, and verifies the final inventory. Best-effort ingress cleanup now gives up on unreachable SSH after 45 seconds instead of retrying for ten minutes.
 - Kept GitHub CI focused on cheap required lint, documentation drift, and tag publication; HCloud smoke, credentials, cluster inspection, and teardown now remain local. Tag publication rejects missing release notes.
 - Restored the one-command `createkh` and `cleanupkh` flows for Bash/Zsh and Fish. `scripts/create.sh` again works when downloaded directly, while manifest verification and atomic Packer bundle publication stay behind the simple entrypoint.
 

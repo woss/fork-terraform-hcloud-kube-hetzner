@@ -286,7 +286,9 @@ known benign ingress-LB detach race (`resource_already_detaching`/422 from dual
 CCM and Terraform ownership), then prints a read-only orphan report including
 unlabeled primary IPs, out-of-state autoscaled nodes, and exact managed load
 balancer names. Use `scripts/cleanup.sh` only as the forceful fallback after the
-report shows leftovers or state is already wrecked.
+report shows leftovers or state is already wrecked. It treats the token's
+entire HCloud project as cluster-dedicated; review the dry run and include
+persistent data only deliberately.
 
 Autoscaler-created servers are not in Terraform state. If an autoscaled server
 pins the network/subnet during destroy, delete it only after the control plane is

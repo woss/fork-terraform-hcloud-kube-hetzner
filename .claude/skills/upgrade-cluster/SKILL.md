@@ -344,7 +344,9 @@ If an upgrade exercise is on a disposable cluster and must be torn down, run
 `scripts/destroy.sh` from the Terraform root. It auto-retries only the known
 benign ingress-LB detach race and then prints a read-only orphan report. Use
 `scripts/cleanup.sh` only as the forceful fallback when state is already broken
-or the report identifies leftovers.
+or the report identifies leftovers. It treats the token's entire HCloud project
+as cluster-dedicated; review the dry run and include persistent data only
+deliberately.
 
 Autoscaler-created servers are outside Terraform state. If they pin
 network/subnet deletion, delete them only after the control plane is dead, or

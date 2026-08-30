@@ -161,7 +161,7 @@ Verify the live tag at startup; the checked-in release baseline is **v3.1.0**.
 | Enabling embedded registry mirror on low-trust nodes | Use only for equal-trust clusters; warn about credential sharing and tag poisoning |
 | Disabling SELinux globally for one workload denial | Follow `docs/selinux.md`: collect AVCs, try udica, use per-pool `selinux = false` only as the last resort |
 | Assuming RKE2 needs 8GB control planes | v3 size-aware kubelet reservations make 4GB `cx23` control planes viable; still size production for workload headroom |
-| Manual cloud deletes during teardown | Use `scripts/destroy.sh` first; `scripts/cleanup.sh` is the forceful fallback |
+| Manual cloud deletes during teardown | Use `scripts/destroy.sh` first; `scripts/cleanup.sh` is the forceful fallback and targets the token's entire HCloud project |
 
 ### v3 Topology Shortcuts
 
@@ -342,7 +342,9 @@ kubeconfig after certificate recovery.
    control plane is dead. Then use the orphan report to identify and delete only
    the autoscaler-created servers, and rerun `scripts/destroy.sh`.
 4. Use <module-checkout>/scripts/cleanup.sh only when state is already broken or
-   the read-only report identifies leftovers; review its dry run before deletion.
+   the read-only report identifies leftovers. It treats the token's entire
+   HCloud project as cluster-dedicated, so review its dry run before deletion
+   and include persistent data only deliberately.
 ```
 
 ### Workflow: Feature Questions

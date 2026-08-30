@@ -148,22 +148,18 @@ If resources are stuck (especially autoscaler nodes), run:
 
 ```bash
 cd /Volumes/MysticalTech/Code/kube-test
-/Volumes/MysticalTech/Code/kube-hetzner/scripts/cleanup.sh
+/Volumes/MysticalTech/Code/kube-hetzner/scripts/cleanup.sh --dry-run
+/Volumes/MysticalTech/Code/kube-hetzner/scripts/cleanup.sh --execute
 ```
+
+The force cleanup treats the Terraform token's entire HCloud project as
+cluster-dedicated. Inspect every dry-run row before the typed confirmation and
+include volumes, snapshots, DNS zones, or Storage Boxes only deliberately.
 
 Optional alias:
 
 ```bash
 alias cleanupkh='/Volumes/MysticalTech/Code/kube-hetzner/scripts/cleanup.sh'
-```
-
-And if autoscaled servers still exist, delete directly:
-
-```bash
-ids="$(hcloud server list -o columns=id,name | awk '/khv3-/{print $1}')"
-if [ -n "$ids" ]; then
-  echo "$ids" | xargs -n1 hcloud server delete
-fi
 ```
 
 ## Step 3: Verify Snapshot Prerequisites

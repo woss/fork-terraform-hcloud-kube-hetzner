@@ -2624,7 +2624,7 @@ EOT
     ssh_agent_identity  = local.ssh_agent_identity
     ssh_host            = local.first_control_plane_ip
     ssh_port            = var.ssh_port
-    ssh_timeout         = "10m"
+    ssh_timeout         = "45s"
     bastion_host        = local.ssh_bastion.bastion_host
     bastion_port        = local.ssh_bastion.bastion_port
     bastion_user        = local.ssh_bastion.bastion_user
