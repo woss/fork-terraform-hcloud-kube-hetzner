@@ -36,10 +36,10 @@ Leap Micro uses a **transactional-update** system on btrfs. This is the mental m
 |-------|-----------|------------------|---------------------------|
 | `/usr` (snapshot) | No (read-only) | Yes | Yes |
 | `/etc` via `transactional-update shell` | Yes (new snapshot) | Yes (after reboot) | Yes |
-| `/etc` via direct edit on running system | Yes (volatile overlay) | **No** | **No** |
+| `/etc` via direct edit on running system | Yes (current snapshot overlay) | Yes, unless a pending snapshot changed the same path | Current-snapshot content only |
 | `/var` (separate subvolume) | Yes | Yes | Yes |
 
-**Rule:** Any `/etc` change that must survive MUST go through `transactional-update --continue shell`.
+**Rule:** Ordinary `/etc` edits persist across a normal reboot. However, after `transactional-update` creates a pending snapshot, concurrent edits to the current snapshot's `/etc` are not merged when the pending snapshot changed the same path. Put image-building and package-coupled `/etc` changes inside `transactional-update --continue shell`, or reboot into the pending snapshot before editing.
 
 **Packer build phases:**
 1. **Rescue mode:** Write qcow2 to disk, reboot
@@ -257,7 +257,7 @@ ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 root@
 | k3s/rke2 not starting | Config or SELinux | Journal + audit.log | Fix config or policy |
 | Workload denied by SELinux | Missing workload policy | AVC lines in audit/journal | Follow `docs/selinux.md`; try udica before disabling a pool |
 | Network/subnet destroy hangs | Autoscaler-created server outside Terraform state | `hcloud server list` for cluster-name or `kh-ci-*` leftovers | Delete only after control plane is dead, or scale autoscaler `min_nodes = 0` first |
-| `/etc` change vanished | Edited outside transactional-update | Check packer phase | Move change to phase 2 |
+| `/etc` change vanished after transactional reboot | Current and pending snapshots changed the same path | Inspect `transactional-update status` and `/var/lib/overlay` | Reapply in the active snapshot or move image-build changes into the transaction |
 
 ## Debugging SSH Manually
 

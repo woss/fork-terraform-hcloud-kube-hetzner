@@ -55,6 +55,12 @@ CASES = [
         expected_substring="not valid YAML",
     ),
     Case(
+        name="bad-calico-patch-shape",
+        var_file=FIXTURE_DIR / "bad-calico-patch-shape.tfvars.fixture",
+        target="module.sut",
+        expected_substring="valid Kubernetes strategic-merge patch",
+    ),
+    Case(
         name="bad-node-annotation-key",
         var_file=FIXTURE_DIR / "bad-node-annotation-key.tfvars.fixture",
         target="module.sut.terraform_data.validation_contract",
@@ -71,6 +77,12 @@ CASES = [
         var_file=FIXTURE_DIR / "bad-node-annotation-value.tfvars.fixture",
         target="module.sut.terraform_data.validation_contract",
         expected_substring="agent_nodepools annotations values must be single-line strings",
+    ),
+    Case(
+        name="too-many-agent-firewalls",
+        var_file=FIXTURE_DIR / "too-many-agent-firewalls.tfvars.fixture",
+        target="module.sut.terraform_data.agent_firewall_validation_contract",
+        expected_substring="at most five Hetzner Firewalls",
     ),
     Case(
         name="rke2-overreserved",
@@ -260,18 +272,19 @@ def init_fixture() -> bool:
 def run_case(case: Case) -> str:
     plan_env = dict(os.environ)
     plan_env["TF_VAR_hcloud_token"] = HCLOUD_TOKEN if TOKEN_MODE else "0" * 64
+    command = [
+        "terraform",
+        "plan",
+        "-input=false",
+        "-lock=false",
+        "-refresh=false",
+        "-no-color",
+        f"-var-file={BASELINE.name}",
+        f"-var-file={case.var_file.name}",
+    ]
+    command.append(f"-target={case.target}")
     result = run(
-        [
-            "terraform",
-            "plan",
-            "-input=false",
-            "-lock=false",
-            "-refresh=false",
-            "-no-color",
-            f"-var-file={BASELINE.name}",
-            f"-var-file={case.var_file.name}",
-            f"-target={case.target}",
-        ],
+        command,
         extra_env={"TF_VAR_hcloud_token": plan_env["TF_VAR_hcloud_token"]},
     )
     output = combined_output(result)

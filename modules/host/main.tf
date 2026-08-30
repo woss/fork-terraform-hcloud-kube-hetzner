@@ -29,6 +29,8 @@ resource "hcloud_server" "server" {
   firewall_ids       = local.effective_firewall_ids
   placement_group_id = var.placement_group_id
   backups            = var.backups
+  delete_protection  = var.delete_protection
+  rebuild_protection = var.delete_protection
   user_data          = data.cloudinit_config.config.rendered
   keep_disk          = var.keep_disk_size
   public_net {
@@ -66,6 +68,21 @@ resource "hcloud_server" "server" {
       user_data,
       image,
     ]
+
+    precondition {
+      condition     = length(local.effective_firewall_ids) <= 5
+      error_message = "Hetzner Cloud supports at most five firewalls per server."
+    }
+
+    precondition {
+      condition     = alltrue([for firewall_id in local.effective_firewall_ids : firewall_id > 0 && firewall_id == floor(firewall_id)])
+      error_message = "Firewall IDs must be positive integers."
+    }
+
+    precondition {
+      condition     = length(data.cloudinit_config.config.rendered) <= 32768
+      error_message = "Static node cloud-init user_data exceeds Hetzner Cloud's 32 KiB API limit. Reduce extra_write_files, extra_runcmd, registries_config, kubelet_config, or other embedded node configuration."
+    }
   }
 
 }
@@ -99,6 +116,7 @@ resource "terraform_data" "initial_readiness" {
       # that unit is non-critical here and is managed explicitly later.
       <<-EOT
       timeout 600 bash <<'EOF'
+      cloud_final_diagnostics_shown=false
       while true; do
         state="$(systemctl is-system-running 2>/dev/null || true)"
 
@@ -116,6 +134,12 @@ resource "terraform_data" "initial_readiness" {
 
           echo "Waiting for system; failed units remain:"
           printf '%s\n' "$failed_units"
+          if [ "$cloud_final_diagnostics_shown" = false ] && printf '%s\n' "$failed_units" | grep -qx 'cloud-final.service'; then
+            cloud_final_diagnostics_shown=true
+            echo "cloud-final.service failed; recent diagnostics follow:"
+            systemctl status cloud-final.service --no-pager -l || true
+            journalctl -u cloud-final.service -n 80 --no-pager || true
+          fi
         else
           echo "Waiting for system... ($state)"
         fi
@@ -131,41 +155,13 @@ resource "terraform_data" "initial_readiness" {
   }
 }
 
+# Preserve the historical state address. The parent module reconciles the
+# timer after Kubernetes starts, alongside health-checker.service.
 resource "terraform_data" "os_upgrade_timer" {
   triggers_replace = {
     server_id                = hcloud_server.server.id
     automatically_upgrade_os = tostring(var.automatically_upgrade_os)
   }
-
-  connection {
-    user           = "root"
-    private_key    = var.ssh_private_key
-    agent_identity = local.ssh_agent_identity
-    host           = local.provisioner_connection_host
-    port           = var.ssh_port
-
-    bastion_host        = var.ssh_bastion.bastion_host
-    bastion_port        = var.ssh_bastion.bastion_port
-    bastion_user        = var.ssh_bastion.bastion_user
-    bastion_private_key = var.ssh_bastion.bastion_private_key
-
-    timeout = "10m"
-  }
-
-  provisioner "remote-exec" {
-    inline = var.automatically_upgrade_os ? [
-      <<-EOT
-      echo "Automatic OS updates are enabled"
-      EOT
-      ] : [
-      <<-EOT
-      echo "Automatic OS updates are disabled"
-      systemctl --now disable transactional-update.timer
-      EOT
-    ]
-  }
-
-  depends_on = [terraform_data.initial_readiness]
 }
 
 resource "hcloud_server_network" "extra_networks" {
@@ -183,6 +179,7 @@ resource "terraform_data" "ssh_authorized_keys" {
     ssh_public_key                = sha1(var.ssh_public_key)
     ssh_additional_keys           = sha1(join("\n", var.ssh_additional_public_keys))
     ssh_authorized_keys_exclusive = tostring(var.ssh_authorized_keys_exclusive)
+    reconciler                    = "identity-v1"
   }
 
   connection {
@@ -209,41 +206,22 @@ resource "terraform_data" "ssh_authorized_keys" {
     destination = "/tmp/authorized_keys"
   }
 
+  provisioner "file" {
+    source      = "${path.module}/../../scripts/reconcile-authorized-keys.sh"
+    destination = "/tmp/reconcile-authorized-keys.sh"
+  }
+
   provisioner "remote-exec" {
     inline = [
       <<-EOT
       set -eu
-
-      install -d -m 0700 /root/.ssh
-
-      authorized_keys="/root/.ssh/authorized_keys"
-      sidecar="/root/.ssh/authorized_keys.kube-hetzner"
-      current_keys="$(mktemp)"
-      preserved_keys="$(mktemp)"
-      reconciled_keys="$(mktemp)"
-      trap 'rm -f "$current_keys" "$preserved_keys" "$reconciled_keys" /tmp/authorized_keys' EXIT
-
-      awk 'NF > 0 && !seen[$0]++ { print }' /tmp/authorized_keys > "$current_keys"
-
-      if [ "${var.ssh_authorized_keys_exclusive}" = "true" ]; then
-        install -m 0600 "$current_keys" "$authorized_keys"
-      else
-        if [ -f "$authorized_keys" ]; then
-          if [ -f "$sidecar" ]; then
-            awk 'NR == FNR { previous[$0] = 1; next } NF > 0 && !previous[$0] { print }' "$sidecar" "$authorized_keys" > "$preserved_keys"
-          else
-            awk 'NF > 0 { print }' "$authorized_keys" > "$preserved_keys"
-          fi
-        else
-          : > "$preserved_keys"
-        fi
-
-        awk 'NF > 0 && !seen[$0]++ { print }' "$preserved_keys" "$current_keys" > "$reconciled_keys"
-        install -m 0600 "$reconciled_keys" "$authorized_keys"
-      fi
-
-      install -m 0600 "$current_keys" "$sidecar"
-      chown root:root /root/.ssh "$authorized_keys" "$sidecar"
+      trap 'rm -f /tmp/authorized_keys /tmp/reconcile-authorized-keys.sh' EXIT
+      install -m 0755 /tmp/reconcile-authorized-keys.sh /usr/local/sbin/kube-hetzner-reconcile-authorized-keys
+      /usr/local/sbin/kube-hetzner-reconcile-authorized-keys \
+        /tmp/authorized_keys \
+        /root/.ssh/authorized_keys \
+        /root/.ssh/authorized_keys.kube-hetzner \
+        ${var.ssh_authorized_keys_exclusive}
       EOT
       ,
     ]
@@ -391,8 +369,10 @@ data "cloudinit_config" "config" {
         dns_servers                  = var.dns_servers
         has_dns_servers              = local.has_dns_servers
         sshAuthorizedKeysYaml        = yamlencode(local.ssh_authorized_keys)
+        sshAuthorizedKeysContent     = format("%s\n", join("\n", local.ssh_authorized_keys))
         cloudinit_write_files_common = var.cloudinit_write_files_common
         cloudinit_runcmd_common      = var.cloudinit_runcmd_common
+        metadata_route_repair_script = var.metadata_route_repair_script
         cloudinit_write_files_extra  = var.cloudinit_write_files_extra
         cloudinit_runcmd_extra       = var.cloudinit_runcmd_extra
         swap_size                    = var.swap_size
@@ -496,45 +476,14 @@ moved {
   to   = terraform_data.zram
 }
 
-# Resource to toggle transactional-update.timer based on automatically_upgrade_os setting
+# Preserve the historical state address. The parent module owns service
+# reconciliation now so it can order the remote action after Kubernetes starts.
 resource "terraform_data" "os_upgrade_toggle" {
   triggers_replace = {
-    os_upgrade_state = var.automatically_upgrade_os ? "enabled" : "disabled"
-    server_id        = hcloud_server.server.id
+    os_upgrade_state     = var.automatically_upgrade_os ? "enabled" : "disabled"
+    health_checker_state = "parent-post-install-v2"
+    server_id            = hcloud_server.server.id
   }
-
-  connection {
-    user           = "root"
-    private_key    = var.ssh_private_key
-    agent_identity = local.ssh_agent_identity
-    host           = local.provisioner_connection_host
-    port           = var.ssh_port
-
-    bastion_host        = var.ssh_bastion.bastion_host
-    bastion_port        = var.ssh_bastion.bastion_port
-    bastion_user        = var.ssh_bastion.bastion_user
-    bastion_private_key = var.ssh_bastion.bastion_private_key
-
-  }
-
-  provisioner "remote-exec" {
-    inline = [
-      <<-EOT
-      if [ "${var.automatically_upgrade_os}" = "true" ]; then
-        echo "automatically_upgrade_os changed to true, enabling transactional-update.timer"
-        systemctl enable --now transactional-update.timer || true
-      else
-        echo "automatically_upgrade_os changed to false, disabling transactional-update.timer"
-        systemctl disable --now transactional-update.timer || true
-      fi
-      EOT
-    ]
-  }
-
-  depends_on = [
-    terraform_data.initial_readiness,
-    terraform_data.registries
-  ]
 }
 
 moved {

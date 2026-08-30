@@ -28,6 +28,7 @@ module "sut" {
   kubernetes_distribution = var.kubernetes_distribution
   cni_plugin              = var.cni_plugin
   cilium_routing_mode     = var.cilium_routing_mode
+  calico_values           = var.calico_values
   network_region          = "eu-central"
   enabled_architectures   = ["x86"]
 
@@ -53,6 +54,7 @@ module "sut" {
   node_transport_mode                               = var.node_transport_mode
   firewall_kube_api_source                          = var.firewall_kube_api_source
   firewall_ssh_source                               = var.firewall_ssh_source
+  extra_firewall_ids                                = var.extra_firewall_ids
   tailscale_auth_key                                = var.tailscale_auth_key
   tailscale_node_transport                          = var.tailscale_node_transport
   cluster_ipv4_cidr                                 = var.cluster_ipv4_cidr
@@ -93,6 +95,11 @@ variable "cni_plugin" {
 variable "cilium_routing_mode" {
   type    = string
   default = "tunnel"
+}
+
+variable "calico_values" {
+  type    = string
+  default = ""
 }
 
 variable "ingress_controller" {
@@ -210,5 +217,10 @@ variable "vswitch_id" {
 
 variable "extra_robot_nodes" {
   type    = any
+  default = []
+}
+
+variable "extra_firewall_ids" {
+  type    = list(number)
   default = []
 }

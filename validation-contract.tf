@@ -3,10 +3,36 @@
 # referenced variable/local has been evaluated. These are hard preconditions:
 # invalid configurations still fail during plan before any infrastructure is
 # changed.
+resource "terraform_data" "agent_firewall_validation_contract" {
+  input = true
+
+  lifecycle {
+    precondition {
+      condition = alltrue([
+        for agent_node in values(local.agent_nodes) :
+        (agent_node.disable_ipv4 && agent_node.disable_ipv6) ||
+        length(distinct(concat(var.extra_firewall_ids, agent_node.extra_firewall_ids))) <= 4
+      ])
+      error_message = "A public server can attach at most five Hetzner Firewalls. The module-managed firewall uses one slot, so global, nodepool, and node extra_firewall_ids may contain at most four unique IDs in total."
+    }
+  }
+}
+
 resource "terraform_data" "validation_contract" {
   input = true
 
   lifecycle {
+    precondition {
+      condition = alltrue([
+        for key in try(data.hcloud_ssh_keys.keys_by_selector[0].ssh_keys, []) :
+        can(regex(
+          "^(ssh-(rsa|ed25519)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh[.]com) [A-Za-z0-9+/=]+( [^\\r\\n]*)?$",
+          trimspace(key.public_key)
+        ))
+      ])
+      error_message = "ssh_hcloud_key_label selected a key with an unsupported or malformed OpenSSH public key. Use RSA, Ed25519, ECDSA NIST P-256/P-384/P-521, or OpenSSH FIDO keys."
+    }
+
     # Shared subnet mode pins one dense IP per primary-network agent inside the
     # single shared agent subnet; the highest host offset must fit the subnet,
     # or cidrhost() would fail mid-plan with an opaque error (#2240 review).

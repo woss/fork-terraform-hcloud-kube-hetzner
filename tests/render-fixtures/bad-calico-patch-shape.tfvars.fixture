@@ -1,0 +1,4 @@
+cni_plugin = "calico"
+calico_values = <<-YAML
+  wireguardEnabled: true
+YAML

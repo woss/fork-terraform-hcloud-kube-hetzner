@@ -1,8 +1,8 @@
 # kube-hetzner Packer security bundle, relative to packer-template/.
 # Keep this list exact: scripts/install-packer-security-bundle.sh rejects
 # missing, duplicate, or additional entries.
-159818cd5c87d488b921004b82713d1b313e9f7f69c1c5021bfc1b9ef6c18e1d  hcloud-leapmicro-snapshots.pkr.hcl
-5f601ea890a81379ea05318ca587f1ad7deeaa7d8aa200f16ba5701a9cb3b82a  hcloud-microos-snapshots.pkr.hcl
+b1bcbf1e497a2f0e2ccb40da41d5f7d9ecb677155140fd96df4652fb57d85acf  hcloud-leapmicro-snapshots.pkr.hcl
+4c5336527f992ef8fd3f7fdb52fc724b01d288e3faf70aeb8fe2cfd98355cf07  hcloud-microos-snapshots.pkr.hcl
 b5745739ebfb95b25b8e810f9bcb847fe750ccda598bd85f02f0e974599a6d7e  keys/opensuse-project-signing-key.asc
 7d2415f7fc532c365c8874bfad966566daaa0d04a9a5ba14d1db6080a9c12629  keys/rancher-ci-signing-key.asc
 254585d32954ef6b2103ec16f0e6e6818b61107ffe024d464a5ae4b6c8eb57b9  scripts/install-packer-security-bundle.sh

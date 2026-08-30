@@ -27,8 +27,8 @@ require_text 'filebase64("${path.root}/scripts/verify-microos-image.sh")' 'Micro
 require_text 'filebase64("${path.root}/scripts/install-verified-rancher-rpm.sh")' 'verified Rancher RPM installer is not embedded'
 require_text 'filebase64("${path.root}/scripts/verify-rancher-rpm.sh")' 'verified Rancher RPM verifier is not embedded'
 
-require_text '514010036aad0b4b35ec16039e11f6ae9cf6d550a7f5fa460e80beb801e22740' 'reviewed x86 MicroOS image digest is missing'
-require_text 'e291d2f6497b70079120fbb46f42caa6d92b051fdef0ee163d8c3cc4a50ad789' 'reviewed ARM MicroOS image digest is missing'
+require_text '015f2b6b2ec1cd9480e372cea97cf4cd8e75869005ff2200b617629532dc05e1' 'reviewed x86 MicroOS image digest is missing'
+require_text 'd3e080c1bff16fc685c1de1c842a0bdf3653637e88514cbfc47c711c44fb9401' 'reviewed ARM MicroOS image digest is missing'
 require_text 'aaaf5a0632d77db8c5808c6d1097167c934602639d628526c1ec0bd9cb2dd745' 'reviewed k3s-selinux MicroOS RPM digest is missing'
 require_text '0c3b1184293a2f47482d6333aa183b91ed9351889925b55760208a37a1f68a39' 'reviewed rke2-selinux MicroOS RPM digest is missing'
 
@@ -36,8 +36,19 @@ require_text 'transactional-update --continue shell' 'SELinux RPM installation m
 require_text 'case "${var.selinux_package_to_install}" in' 'k3s/RKE2 package selection is missing'
 require_text 'RANCHER_SIGNING_KEY_FILE=/var/tmp/rancher-ci-signing-key.asc' 'RPM verification does not use the vendored Rancher key'
 require_text 'verify_baked_selinux_package' 'post-reboot SELinux RPM verification is missing'
+require_text 'prepare_microos_first_boot = <<-EOT' 'pre-first-boot MicroOS preparation is missing'
+require_text 'blockdev --rereadpt /dev/sda || true' 'written MicroOS partition table is not refreshed before inspection'
+require_text 'for attempt in $(seq 1 30); do' 'written MicroOS ROOT discovery is not bounded'
+require_text 'root_device="$(blkid -L ROOT 2>/dev/null || true)"' 'written MicroOS ROOT discovery does not use its filesystem label'
+require_text '/dev/sda*) break ;;' 'written MicroOS ROOT discovery is not constrained to the target disk'
+require_text 'chroot "$mount_dir" /usr/bin/busybox --list | grep -Fxq udhcpc' 'the bundled udhcpc applet is not fail-closed verified'
+require_text "'    dhcp_client_priority: [udhcpc]'" 'cloud-init is not configured to avoid the blocking dhcpcd metadata probe'
+require_text 'mount -o subvol=@/usr/local "$root_device" "$mount_dir/usr/local"' 'persistent /usr/local is not mounted before installing udhcpc'
 require_text 'condition     = can(regex("^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$", var.timezone))' 'timezone input is not constrained to safe zoneinfo path components'
 require_text 'inline       = [local.finalize_snapshot]' 'transactional snapshot finalizer is missing'
+
+[[ "$(grep -Fc '${local.prepare_microos_first_boot}' "$template")" == 2 ]] \
+  || fail 'both architecture write paths must prepare cloud-init before first boot'
 
 [[ "$(grep -Fc 'inline       = [local.finalize_snapshot]' "$template")" == 2 ]] \
   || fail 'both architecture builds must run transactional snapshot finalization'
@@ -103,9 +114,35 @@ grep -Fq "qemu-img convert -p -f qcow2 -O host_device '$x86_path' /dev/sda" <<< 
 grep -Fq "qemu-img convert -p -f qcow2 -O host_device '$arm_path' /dev/sda" <<< "$arm_write_script" \
   || fail 'rendered ARM conversion does not use the fixed verified path'
 
+for write_script in "$x86_write_script" "$arm_write_script"; do
+  for required_first_boot_text in \
+    'blockdev --rereadpt /dev/sda || true' \
+    'for attempt in $(seq 1 30); do' \
+    'root_device="$(blkid -L ROOT 2>/dev/null || true)"' \
+    '/dev/sda*) break ;;' \
+    'written MicroOS ROOT filesystem is not Btrfs' \
+    'chroot "$mount_dir" /usr/bin/busybox --list | grep -Fxq udhcpc' \
+    'mount -o subvol=@/usr/local "$root_device" "$mount_dir/usr/local"' \
+    'ln -snf /usr/bin/busybox "$mount_dir/usr/local/sbin/udhcpc"' \
+    "'system_info:'" \
+    "'  network:'" \
+    "'    dhcp_client_priority: [udhcpc]'"; do
+    grep -Fq "$required_first_boot_text" <<< "$write_script" \
+      || fail "rendered MicroOS write path is missing: $required_first_boot_text"
+  done
+
+  convert_line="$(grep -n -m1 'qemu-img convert' <<< "$write_script" | cut -d: -f1)"
+  priority_line="$(grep -n -m1 'dhcp_client_priority: \[udhcpc\]' <<< "$write_script" | cut -d: -f1)"
+  reboot_line="$(grep -n -m1 'sleep 1 && udevadm settle && reboot' <<< "$write_script" | cut -d: -f1)"
+  [[ "$convert_line" -lt "$priority_line" && "$priority_line" -lt "$reboot_line" ]] \
+    || fail 'MicroOS udhcpc configuration must be written after conversion and before first boot'
+done
+
 for required_cleanup_text in \
   "transactional-update --continue shell" \
   "rm -f /etc/ssh/ssh_host_*" \
+  'rm -f /root/.ssh/authorized_keys /root/.ssh/authorized_keys.kube-hetzner' \
+  'SSH authorized keys remain in the persistent root subvolume' \
   "install -m 0644 /dev/null /etc/NetworkManager/NetworkManager.conf" \
   "timezone='Europe/Madrid'" \
   'ln -snf "$zoneinfo" /etc/localtime' \
@@ -117,6 +154,15 @@ for required_cleanup_text in \
   grep -Fq "$required_cleanup_text" <<< "$finalize_script" \
     || fail "rendered transactional finalizer is missing: $required_cleanup_text"
 done
+
+if ! awk '
+  /transactional-update --continue shell/ { inside = 1; next }
+  inside && /^[[:space:]]*EOF$/ { inside = 0; next }
+  !inside && /rm -f \/root\/[.]ssh\/authorized_keys/ { found = 1 }
+  END { exit(found ? 0 : 1) }
+' <<< "$finalize_script"; then
+  fail 'persistent /root authorized-key cleanup must run outside the transactional shell'
+fi
 
 for required_booted_selinux_check in \
   'rpm -q --queryformat' \
@@ -215,9 +261,9 @@ explicit_official_x86_digest="$(printf 'local.opensuse_microos_x86_expected_sha2
   -var "opensuse_microos_x86_mirror_link=$official_x86_url" "$template")"
 explicit_official_arm_digest="$(printf 'local.opensuse_microos_arm_expected_sha256_computed\n' | "$packer_bin" console \
   -var "opensuse_microos_arm_mirror_link=$official_arm_url" "$template")"
-[[ "$explicit_official_x86_digest" == 514010036aad0b4b35ec16039e11f6ae9cf6d550a7f5fa460e80beb801e22740 ]] \
+[[ "$explicit_official_x86_digest" == 015f2b6b2ec1cd9480e372cea97cf4cd8e75869005ff2200b617629532dc05e1 ]] \
   || fail 'explicit legacy x86 official URL no longer selects official digest mode'
-[[ "$explicit_official_arm_digest" == e291d2f6497b70079120fbb46f42caa6d92b051fdef0ee163d8c3cc4a50ad789 ]] \
+[[ "$explicit_official_arm_digest" == d3e080c1bff16fc685c1de1c842a0bdf3653637e88514cbfc47c711c44fb9401 ]] \
   || fail 'explicit legacy ARM official URL no longer selects official digest mode'
 
 custom_x86_image_digest=3333333333333333333333333333333333333333333333333333333333333333

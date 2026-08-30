@@ -161,7 +161,7 @@ resource "terraform_data" "first_control_plane" {
 
   provisioner "file" {
     content     = local.secrets_encryption_config
-    destination = "/tmp/encryption-config.yaml"
+    destination = local.secrets_encryption_staging_file
   }
 
   provisioner "file" {
@@ -330,7 +330,7 @@ resource "terraform_data" "control_plane_setup_rke2" {
 
   provisioner "file" {
     content     = local.secrets_encryption_config
-    destination = "/tmp/encryption-config.yaml"
+    destination = local.secrets_encryption_staging_file
   }
 
   # Upload the CNI install file.
@@ -1039,7 +1039,6 @@ resource "terraform_data" "rke2_kustomization" {
       local.traefik_values,
       local.nginx_values,
       local.haproxy_values,
-      local.calico_values,
       local.cilium_values,
       local.longhorn_values,
       local.csi_driver_smb_values,
@@ -1056,7 +1055,6 @@ resource "terraform_data" "rke2_kustomization" {
       coalesce(local.ccm_version, "N/A"),
       coalesce(local.csi_version, "N/A"),
       coalesce(local.kured_version, "N/A"),
-      coalesce(local.calico_version, "N/A"),
       coalesce(var.cilium_version, "N/A"),
       coalesce(local.traefik_version, "N/A"),
       coalesce(local.nginx_version, "N/A"),
@@ -1119,12 +1117,6 @@ resource "terraform_data" "rke2_kustomization" {
         "${path.module}/templates/load_balancer_monitoring.yaml.tpl",
         {}
       ) : "",
-      templatefile(
-        "${path.module}/templates/calico.yaml.tpl",
-        {
-          values = local.calico_values
-        }
-      ),
       templatefile(
         "${path.module}/templates/cilium.yaml.tpl",
         {
@@ -1296,17 +1288,6 @@ resource "terraform_data" "rke2_kustomization" {
   provisioner "file" {
     content     = local.gateway_api_standard_crds_manifest
     destination = "/var/post_install/gateway-api-standard-crds.yaml"
-  }
-
-  # Upload the k3s Calico kustomization patch. RKE2 CNI manifests are handled
-  # separately through /var/lib/rancher/rke2/server/manifests.
-  provisioner "file" {
-    content = templatefile(
-      "${path.module}/templates/calico.yaml.tpl",
-      {
-        values = local.calico_values
-    })
-    destination = "/var/post_install/calico.yaml"
   }
 
   # Upload the cilium install file

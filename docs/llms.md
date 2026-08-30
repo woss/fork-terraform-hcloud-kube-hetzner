@@ -143,6 +143,8 @@ module "kube-hetzner" {
   ssh_private_key = file("~/.ssh/id_ed25519")
   # You can add additional SSH public Keys to grant other team members root access to your cluster nodes.
   # ssh_additional_public_keys = []
+  # Preserve unrelated out-of-band root keys by default. Set true to manage the file exclusively.
+  # ssh_authorized_keys_exclusive = false
 ```
 
 * **`ssh_public_key` (Obligatory):**
@@ -161,6 +163,10 @@ module "kube-hetzner" {
   * **Purpose:** A list of strings, where each string is the content of an additional SSH public key. These keys will also be added to `authorized_keys` on the nodes.
   * **Use Case:** Granting SSH access to other team members or automated systems without sharing your primary private key.
   * **Format:** `ssh_additional_public_keys = [file("~/.ssh/teammate1.pub"), "ssh-rsa AAAAB3NzaC1yc2EAAA... user@host"]`
+* **`ssh_authorized_keys_exclusive` (Boolean, Optional):**
+  * **Default:** `false`.
+  * **Purpose:** Controls ownership of `/root/.ssh/authorized_keys`. The default reconciles module-managed key identities while preserving unrelated keys added by operators or other trusted automation. Set `true` only when kube-hetzner should replace the file with exactly `ssh_public_key` plus `ssh_additional_public_keys`.
+  * **Security:** Removing a module-managed key revokes that identity in either mode, including stale copies carrying restrictive or forced-command options. Exclusive mode can lock out intentionally out-of-band access, so validate the managed key set first.
 
 ```terraform
   # You can also add additional SSH public Keys which are saved in the hetzner cloud by a label.
@@ -558,6 +564,17 @@ The example shows three control plane nodepools, each with one node, in differen
   * **Minimum Requirement (Initial Cluster Create):** Typically, at least one agent nodepool with `count >= 1` is needed, unless it's a single-node cluster where the control plane also acts as a worker (in which case, agent nodepool counts can be 0).
   * **Nodepool Attributes (per map):** Most attributes are the same as for `control_plane_nodepools` (`name`, `server_type`, `location`, `labels`, `taints`, `count`, `swap_size`, `zram_size`, `kubelet_args`, `placement_group`, `backups`, `enable_public_ipv4`/`enable_public_ipv6`).
   * **Specific Agent Nodepool Attributes/Examples:**
+    * **`extra_firewall_ids` (List of Numbers, Optional):**
+      * Attaches existing Hetzner Cloud Firewalls only to servers in this static agent nodepool.
+      * The nodepool list is merged with the module-wide `extra_firewall_ids`; entries in `nodes[*].extra_firewall_ids` add further IDs for individual nodes.
+      * Use this instead of a separate `hcloud_firewall_attachment` when the same servers are managed by this module, so one `hcloud_server.firewall_ids` owner retains a convergent plan.
+      * Hetzner permits five Firewalls per server. The module-managed firewall uses one slot, so the combined global, nodepool, and node lists may contain at most four unique IDs.
+      * If a standalone attachment already owns the relationship, use the state-only handoff in [Day-2 Operations](operations.md#handoff-an-existing-firewall-attachment) before applying this setting.
+      * When both public interfaces are disabled, firewall IDs are intentionally not attached because Hetzner Cloud Firewalls apply only to public networking.
+    * **`delete_protection` (Boolean, Optional, specific to agent nodepools):**
+      * Default: `false`.
+      * If `true`, enables Hetzner API delete and rebuild protection on every static server in the nodepool. Current tested hcloud provider behavior rejects deletion while it remains enabled, so disable it explicitly before an intentional count decrease or destroy. See [terraform-provider-hcloud#1206](https://github.com/hetznercloud/terraform-provider-hcloud/issues/1206).
+      * This is a provider/API safety control, not a backup, Terraform `prevent_destroy`, durable storage, or a guarantee that a full-stack destroy is atomic. Protect persistent data independently.
     * **`longhorn_volume_size` (Number, Optional, specific to agent nodepools if Longhorn is enabled):**
       * If `enable_longhorn = true` (a global module setting), this attribute can be added to an agent nodepool definition.
       * **Purpose:** Instructs the module to create a Hetzner Cloud Volume of the specified size (in GB, e.g., `20` for 20GB) for *each node* in this pool. Longhorn will then be configured to use these dedicated Hetzner Volumes for its storage replicas instead of using the node's local disk.
@@ -786,6 +803,7 @@ The example shows three control plane nodepools, each with one node, in differen
   * **Architecture Constraint (⚠️):** "you can only choose either x86 instances or ARM server types for ALL autoscaler nodepools." This implies a limitation in how the module or the Hetzner cloud provider for Cluster Autoscaler handles mixed-architecture autoscaling groups. You must commit to one architecture (e.g., all `cx` series or all `cax` series) for the pools managed by the autoscaler.
   * **Labels/Taints Versioning (⚠️):** The ability to set `labels` and `taints` directly in the `autoscaler_nodepools` definition depends on using a sufficiently new version of the Cluster Autoscaler image.
   * **Local Storage Scale-Down:** Cluster Autoscaler does not remove nodes that run pods with local storage by default. For disposable local data, use `cluster_autoscaler_extra_args = ["--skip-nodes-with-local-storage=false"]` or annotate only the relevant pods with `cluster-autoscaler.kubernetes.io/safe-to-evict: "true"`.
+  * **Cloud-Init Size:** Hetzner Cloud accepts at most 32 KiB of server `user_data`. The module compresses large autoscaler cloud-init files and enforces the final rendered limit during `terraform plan`; reduce custom agent config, kubelet/registry config, annotations, or bootstrap commands if the guard fails.
   * **Nodepool Attributes (per map within `autoscaler_nodepools`):**
     * **`name` (String, Obligatory):** A unique name for this autoscaled nodepool.
     * **`server_type` (String, Obligatory):** The Hetzner server type for nodes created in this pool (e.g., `cx33`, `cax21`). Must adhere to the single-architecture constraint mentioned above.
@@ -931,24 +949,28 @@ The example shows three control plane nodepools, each with one node, in differen
 **Section 2.8: Resource Protection and Backup Options**
 
 ```terraform
-  # Enable delete protection on compatible resources to prevent accidental deletion from the Hetzner Cloud Console.
-  # This does not protect deletion from Terraform itself.
+  # Enable delete protection on compatible resources to prevent accidental deletion.
+  # Hetzner delete protection also blocks "terraform destroy" (see the note below).
   # enable_delete_protection = {
   #   floating_ip   = true
   #   load_balancer = true
   #   volume        = true # Applies to volumes created for Longhorn via longhorn_volume_size
   # }
+
+  # Protect the nodes/servers themselves per agent nodepool (see agent_nodepools):
+  # delete_protection = true
 ```
 
 * **`enable_delete_protection` (Map of Booleans, Optional):**
   * **Purpose:** Enables Hetzner Cloud's "delete protection" feature on specific resource types created by this module.
   * **Mechanism:** When delete protection is enabled on a resource in Hetzner Cloud, it cannot be deleted directly from the Hetzner Cloud Console (UI or hcloud CLI) until the protection is first disabled.
-  * **Terraform Interaction:** This protection does *not* prevent `terraform destroy` from deleting the resources. Terraform will typically first disable the protection and then delete the resource.
+  * **Terraform Interaction:** Current tested hcloud provider behavior rejects deletion while protection is enabled. Disable it explicitly before an intentional destroy and review the resulting plan. Provider behavior is not a substitute for Terraform `prevent_destroy` or independent backups; see [terraform-provider-hcloud#1206](https://github.com/hetznercloud/terraform-provider-hcloud/issues/1206).
   * **Scope:**
     * `floating_ip = true`: Protects Hetzner Floating IPs (e.g., for egress nodepools).
     * `load_balancer = true`: Protects the Hetzner Load Balancer.
     * `volume = true`: Protects Hetzner Volumes (e.g., those created if `longhorn_volume_size` is used in an agent nodepool).
-  * **Benefit:** Adds an extra safety layer against accidental manual deletions in the Hetzner console.
+  * **Note:** This variable does *not* cover the nodes/servers. To protect servers, set `delete_protection = true` on the relevant `agent_nodepools` entry.
+  * **Benefit:** Adds an extra safety layer against accidental deletions.
 
 ```terraform
   # Enable etcd snapshot backups to S3 storage.
@@ -1188,6 +1210,12 @@ Excellent! Let's continue our meticulous dissection.
     4. After reboot, it uncordons the node (or relies on other mechanisms to confirm health).
   * **Benefit:** Automates the reboot process for OS updates, which is crucial for maintaining security and stability, especially when `automatically_upgrade_os` is enabled.
   * **Reference:** The GitHub releases link helps find specific Kured versions.
+
+* **`enable_kured` (Boolean, Optional):**
+  * **Default:** `true`.
+  * **Purpose:** Includes the module-managed Kured DaemonSet and its RBAC for safe, coordinated node reboots after transactional OS updates.
+  * **Usage:** Set to `false` only when reboot orchestration is managed externally, such as through GitOps or another reboot controller.
+  * **Considerations:** Disabling it does not prune Kured resources that were already applied. If `automatically_upgrade_os = true`, host update timers keep running without module-managed reboot orchestration.
 
 ---
 
@@ -1442,6 +1470,12 @@ Excellent! Let's continue our meticulous dissection.
     * **Non-HA Setup:** Can be risky if an upgrade fails on the single control plane. Often recommended to set to `false` or manage very carefully.
   * **Mechanism:** Uses the [System Upgrade Controller](https://github.com/rancher/system-upgrade-controller), which is deployed into the cluster.
 
+* **`enable_system_upgrade_controller` (Boolean, Optional):**
+  * **Default:** `true`.
+  * **Purpose:** Includes the System Upgrade Controller, its CRDs, and module-managed Kubernetes upgrade plans.
+  * **Usage:** Set to `false` when the controller and plans are managed externally, for example through GitOps.
+  * **Considerations:** Disabling it does not prune resources already applied. With `automatically_upgrade_kubernetes = true`, upgrade labels may remain on nodes but are inert without a controller and plans.
+
 ```terraform
   # By default nodes are drained before k3s upgrade, which will delete and transfer all pods to other nodes.
   # Set this to false to cordon nodes instead, which just prevents scheduling new pods on the node during upgrade
@@ -1483,11 +1517,11 @@ Excellent! Let's continue our meticulous dissection.
 
 * **`automatically_upgrade_os` (Boolean, Optional):**
   * **Default:** `true` (for HA setups).
-  * **Purpose:** Controls whether the underlying operating system packages on the nodes are automatically upgraded.
-    * `true`: The module likely configures unattended upgrades (e.g., `unattended-upgrades` package on Debian/Ubuntu) or a similar mechanism to automatically install OS security patches and updates. Kured then handles the reboots if required.
-    * `false`: Disables automatic OS upgrades. You would be responsible for manually updating the OS on each node.
+  * **Purpose:** Controls the host `transactional-update.timer` on Leap Micro/MicroOS nodes.
+    * `true`: Enables transactional OS updates. `health-checker.service` validates the next boot and Kured coordinates required reboots when `enable_kured = true`.
+    * `false`: Disables the transactional update timer. You are responsible for OS updates and reboots.
   * **Critical Constraint for Non-HA:** "For non-HA clusters ... you have to turn it off." If you have a single control plane, an automatic OS upgrade that requires a reboot (and is handled by Kured) will cause downtime for the entire Kubernetes API.
-  * **Rollback Mention:** The comment "automatic roll-back to the previous snapshot" likely refers to features of the underlying OS or bootloader (e.g., transactional updates with `btrfs` snapshots as used by openSUSE MicroOS, which this module uses as the base OS image). If an OS upgrade fails, the system might be able to roll back to a pre-upgrade state.
+  * **Rollback:** Transactional updates boot a new btrfs snapshot. `health-checker.service` validates that boot and preserves the OS rollback path when the new snapshot is unhealthy.
 
 ```terraform
   # If you need more control over kured and the reboot behaviour, you can pass additional options to kured.
@@ -2010,6 +2044,12 @@ Excellent! Let's continue our meticulous dissection.
   * **Requirements:** `cni_plugin = "cilium"`, `enable_kube_proxy = false`, and an exact `cilium_version` supported by the module's Gateway API CRD mapping.
   * **Cert-Manager:** When this or Traefik Gateway provider support is enabled, cert-manager Gateway API support is enabled as well.
   * **Example:** See `examples/cilium-gateway-api`.
+
+* **`gateway_api_version` (String, Optional):**
+  * **Default:** `""`, which derives the standard Gateway API CRD release from the selected Cilium line.
+  * **Purpose:** Pins the standard `kubernetes-sigs/gateway-api` CRD bundle independently when Cilium Gateway API or Traefik's Kubernetes Gateway provider is enabled.
+  * **Usage:** Set an exact release tag such as `"v1.5.1"` when the derived bundle is not the intended operator contract.
+  * **Considerations:** This selects CRDs, not the Gateway controller. Enable exactly one supported Gateway controller per cluster.
 
 ```terraform
   # Enables Hubble Observability to collect and visualize network traffic. Default: false
@@ -3017,6 +3057,12 @@ The following variables have been added to the `kube-hetzner` module since the i
     * `extra_runcmd`: (Optional, default: []) List of extra shell commands to run as root after the NAT router's cloud-init completes. Terraform reruns these commands when the list changes, so keep them idempotent. Useful for installing additional packages, fetching certificates, or running custom setup scripts.
   * **Port Forwarding:** When the control plane LB has no public interface (`control_plane_load_balancer_enable_public_network = false`), the NAT router automatically configures iptables rules to forward incoming traffic on port 6443 to the control plane LB's private IP. This allows external kubectl access while keeping the control plane LB completely private.
 
+* **`use_private_nat_router_bastion` (Boolean, Optional):**
+  * **Default:** `false`.
+  * **Purpose:** Makes Terraform connect through the NAT router's private IP instead of its public IP when the router is the SSH bastion.
+  * **Requirements:** The operator already needs network-level reachability to the private Network, such as through Tailscale or WireGuard.
+  * **Considerations:** This supports an egress-only public NAT router. External access products remain operator-managed access paths; they are not module-managed Kubernetes node transport.
+
 **k3s Binary Configuration**
 
 ```terraform
@@ -3232,6 +3278,12 @@ Each of these `*_values` variables:
 * **Reference:** See each component's Helm chart documentation for available options
 * **Note:** Indentation within the heredoc is significant
 
+* **`hetzner_ccm_values` (String, Optional):**
+  * **Default:** `""`.
+  * **Purpose:** Replaces the default Hetzner Cloud Controller Manager Helm values passed as `valuesContent`.
+  * **Usage:** Provide a YAML heredoc or `file(...)` when the complete CCM values document is operator-owned.
+  * **Considerations:** Use `hetzner_ccm_merge_values` for a deep overlay on module defaults instead of replacing the entire values document.
+
 **Ingress Controller Versions and Values**
 
 ```terraform
@@ -3298,6 +3350,8 @@ These variables are part of the current v3 module contract and should be conside
 * **`enable_secrets_encryption` (Boolean, Optional):**
   * **Default:** `false`.
   * **Purpose:** Enables Kubernetes Secrets encryption at rest with an API server EncryptionConfiguration.
+  * **Irreversibility:** Once enabled, preserve the original Terraform state and generated key. The module fails closed if an apply tries to disable encryption or replace that key in place, because either operation can make existing Secrets unreadable.
+  * **Existing Clusters:** Key rotation requires an explicit staged multi-key Kubernetes EncryptionConfiguration procedure; kube-hetzner does not automate that migration as a one-step variable change.
 
 * **`enabled_architectures` (List String, Optional):**
   * **Default:** `["x86", "arm"]`.
@@ -3360,7 +3414,8 @@ These variables are part of the current v3 module contract and should be conside
 
 * **`extra_firewall_ids` (List Number, Optional):**
   * **Default:** `[]`.
-  * **Purpose:** Attaches additional existing Hetzner firewall IDs to every managed control-plane and agent node.
+  * **Purpose:** Attaches additional existing Hetzner firewall IDs to every public managed control-plane and agent node. At most four unique extras can apply to one server because the module-managed firewall occupies the fifth Hetzner slot.
+  * **Ownership:** Do not also manage the same attachment with `hcloud_firewall_attachment`; use the state-only handoff in [Day-2 Operations](operations.md#handoff-an-existing-firewall-attachment).
 
 * **`exclude_agents_from_external_load_balancers` (Boolean, Optional):**
   * **Default:** `false`.
@@ -3422,6 +3477,12 @@ These variables are part of the current v3 module contract and should be conside
   * **Default:** `null`.
   * **Purpose:** Provides the OAuth client secret for `tailscale_node_transport.auth.mode = "oauth_client_secret"`. The module appends role-specific OAuth auth-key parameters so static nodes default to durable devices and autoscaler nodes default to ephemeral devices.
 
+* **`multinetwork_mode` (String, Optional):**
+  * **Default:** `"disabled"`.
+  * **Purpose:** Selects the legacy single-private-network topology or the experimental `"cilium_public_overlay"` multinetwork preview.
+  * **Requirements:** The public-overlay preview requires `enable_experimental_cilium_public_overlay = true`, Cilium, public node transport addresses for the selected family, and compatible public control-plane reachability.
+  * **Considerations:** This preview is not production-supported. Use `node_transport_mode = "tailscale"` for the supported private multinetwork path.
+
 * **`enable_experimental_cilium_public_overlay` (Boolean, Optional):**
   * **Default:** `false`.
   * **Purpose:** Explicitly unlocks the lab-only `multinetwork_mode = "cilium_public_overlay"` preview. Keep false for production clusters until the live datapath E2E passes.
@@ -3444,7 +3505,9 @@ These variables are part of the current v3 module contract and should be conside
 
 * **`calico_values` (String, Optional):**
   * **Default:** `""`.
-  * **Purpose:** Replaces the Calico kustomize patch used by the current Calico install path.
+  * **Purpose:** Replaces the strategic-merge patch applied to the upstream Calico manifest installed by K3s.
+  * **RKE2 Boundary:** RKE2 uses its bundled Calico chart and does not consume this value.
+  * **Existing Clusters:** The patch is applied on the next Kustomization run, but Calico does not rewrite an existing IPPool CIDR automatically. Use a controlled IPPool migration rather than deleting an in-use pool.
 
 * **`cert_manager_version` / `longhorn_version` / `rancher_version` (String, Optional):**
   * **Default:** `"*"`.

@@ -169,6 +169,18 @@ resource "terraform_data" "configure_autoscaler" {
       condition     = try(provider::semvers::compare(trimprefix(var.cluster_autoscaler_version, "v"), "1.33.0"), -1) >= 0
       error_message = "autoscaler_nodepools require cluster_autoscaler_version v1.33.0 or newer because kube-hetzner mounts the Hetzner cluster config through HCLOUD_CLUSTER_CONFIG_FILE."
     }
+
+    precondition {
+      # cloudInit is the exact base64(gzip(multipart cloud-init)) string passed
+      # through the autoscaler to Hetzner's user_data API field, so its encoded
+      # length is the relevant 32 KiB boundary rather than the decoded payload.
+      condition = alltrue(flatten([
+        for cluster_config in values(local.desired_cluster_config_by_network) : [
+          for node_config in values(cluster_config.nodeConfigs) : length(node_config.cloudInit) <= 32768
+        ]
+      ]))
+      error_message = "An autoscaler node pool rendered cloud-init larger than Hetzner Cloud's 32 KiB user_data limit. Reduce custom config/write_files/runcmd content for that pool."
+    }
   }
 }
 moved {
@@ -189,13 +201,14 @@ data "cloudinit_config" "autoscaler_config" {
     content = templatefile(
       "${path.module}/templates/autoscaler-cloudinit.yaml.tpl",
       {
-        hostname              = "autoscaler"
-        dns_servers           = var.dns_servers
-        has_dns_servers       = local.has_dns_servers
-        sshAuthorizedKeysYaml = yamlencode(local.ssh_authorized_keys)
-        swap_size             = var.autoscaler_nodepools[count.index].swap_size
-        zram_size             = var.autoscaler_nodepools[count.index].zram_size
-        os                    = local.autoscaler_nodepools_os[count.index]
+        hostname                 = "autoscaler"
+        dns_servers              = var.dns_servers
+        has_dns_servers          = local.has_dns_servers
+        sshAuthorizedKeysYaml    = yamlencode(local.ssh_authorized_keys)
+        sshAuthorizedKeysContent = format("%s\n", join("\n", local.ssh_authorized_keys))
+        swap_size                = var.autoscaler_nodepools[count.index].swap_size
+        zram_size                = var.autoscaler_nodepools[count.index].zram_size
+        os                       = local.autoscaler_nodepools_os[count.index]
         k3s_config = yamlencode(merge(
           {
             server = local.k3s_autoscaler_join_endpoint_by_index[count.index]
@@ -220,6 +233,7 @@ data "cloudinit_config" "autoscaler_config" {
         ))
         cloudinit_write_files_common        = join("", [local.cloudinit_write_files_common, local.autoscaler_node_annotation_write_files_yaml[count.index]])
         cloudinit_runcmd_common             = join("", [local.cloudinit_runcmd_common, local.autoscaler_node_annotation_runcmd_yaml[count.index]])
+        metadata_route_repair_script        = local.metadata_route_repair_script
         private_ipv4_default_route          = !var.autoscaler_enable_public_ipv4 || local.use_nat_router
         public_ipv4_default_route           = var.autoscaler_enable_public_ipv4 && !local.use_nat_router
         public_ipv6_default_route           = var.autoscaler_enable_public_ipv6 && !local.use_nat_router
@@ -230,6 +244,7 @@ data "cloudinit_config" "autoscaler_config" {
         multinetwork_transport_ipv4_enabled = local.multinetwork_transport_ipv4_enabled
         multinetwork_transport_ipv6_enabled = local.multinetwork_transport_ipv6_enabled
         tailscale_bootstrap_script          = local.tailscale_cloud_init_bootstrap_enabled ? local.tailscale_bootstrap_script_autoscaler_by_index[count.index] : ""
+        automatically_upgrade_os            = var.automatically_upgrade_os
       }
     )
   }
@@ -248,13 +263,14 @@ data "cloudinit_config" "autoscaler_config_rke2" {
     content = templatefile(
       "${path.module}/templates/autoscaler-cloudinit.yaml.tpl",
       {
-        hostname              = "autoscaler"
-        dns_servers           = var.dns_servers
-        has_dns_servers       = local.has_dns_servers
-        sshAuthorizedKeysYaml = yamlencode(local.ssh_authorized_keys)
-        swap_size             = var.autoscaler_nodepools[count.index].swap_size
-        zram_size             = var.autoscaler_nodepools[count.index].zram_size
-        os                    = local.autoscaler_nodepools_os[count.index]
+        hostname                 = "autoscaler"
+        dns_servers              = var.dns_servers
+        has_dns_servers          = local.has_dns_servers
+        sshAuthorizedKeysYaml    = yamlencode(local.ssh_authorized_keys)
+        sshAuthorizedKeysContent = format("%s\n", join("\n", local.ssh_authorized_keys))
+        swap_size                = var.autoscaler_nodepools[count.index].swap_size
+        zram_size                = var.autoscaler_nodepools[count.index].zram_size
+        os                       = local.autoscaler_nodepools_os[count.index]
         k3s_config = yamlencode(merge(
           {
             server = local.rke2_autoscaler_join_endpoint_by_index[count.index]
@@ -275,6 +291,7 @@ data "cloudinit_config" "autoscaler_config_rke2" {
         install_k8s_agent_script            = join("\n", concat(local.install_k8s_agent, ["systemctl start rke2-agent", "systemctl enable rke2-agent"]))
         cloudinit_write_files_common        = join("", [local.cloudinit_write_files_common, local.autoscaler_node_annotation_write_files_yaml[count.index]])
         cloudinit_runcmd_common             = join("", [local.cloudinit_runcmd_common, local.autoscaler_node_annotation_runcmd_yaml[count.index]])
+        metadata_route_repair_script        = local.metadata_route_repair_script
         private_ipv4_default_route          = !var.autoscaler_enable_public_ipv4 || local.use_nat_router
         public_ipv4_default_route           = var.autoscaler_enable_public_ipv4 && !local.use_nat_router
         public_ipv6_default_route           = var.autoscaler_enable_public_ipv6 && !local.use_nat_router
@@ -285,6 +302,7 @@ data "cloudinit_config" "autoscaler_config_rke2" {
         multinetwork_transport_ipv4_enabled = local.multinetwork_transport_ipv4_enabled
         multinetwork_transport_ipv6_enabled = local.multinetwork_transport_ipv6_enabled
         tailscale_bootstrap_script          = local.tailscale_cloud_init_bootstrap_enabled ? local.tailscale_bootstrap_script_autoscaler_by_index[count.index] : ""
+        automatically_upgrade_os            = var.automatically_upgrade_os
       }
     )
   }

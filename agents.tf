@@ -53,16 +53,18 @@ module "agents" {
   ssh_additional_public_keys    = length(var.ssh_hcloud_key_label) > 0 ? concat(local.ssh_additional_public_keys, [for key in data.hcloud_ssh_keys.keys_by_selector[0].ssh_keys.*.public_key : trimspace(key)]) : local.ssh_additional_public_keys
   ssh_authorized_keys_exclusive = var.ssh_authorized_keys_exclusive
   firewall_ids                  = each.value.disable_ipv4 && each.value.disable_ipv6 ? [] : [hcloud_firewall.k3s.id] # Cannot attach a firewall when public interfaces are disabled
-  extra_firewall_ids            = each.value.disable_ipv4 && each.value.disable_ipv6 ? [] : var.extra_firewall_ids
+  extra_firewall_ids            = each.value.disable_ipv4 && each.value.disable_ipv6 ? [] : distinct(concat(var.extra_firewall_ids, each.value.extra_firewall_ids))
   placement_group_id            = var.enable_placement_groups ? (each.value.placement_group == null ? hcloud_placement_group.agent[each.value.placement_group_index].id : hcloud_placement_group.agent_named[each.value.placement_group].id) : null
   location                      = each.value.location
   server_type                   = each.value.server_type
   backups                       = each.value.backups
+  delete_protection             = each.value.delete_protection
   ipv4_subnet_id                = local.use_per_nodepool_subnets ? hcloud_network_subnet.agent[[for i, v in var.agent_nodepools : i if v.name == each.value.nodepool_name][0]].id : hcloud_network_subnet.agent[0].id
   dns_servers                   = var.dns_servers
   registries_config             = local.registries_config_effective
   registries_update_script      = local.k8s_registries_update_script
   cloudinit_write_files_common  = local.cloudinit_write_files_common
+  metadata_route_repair_script  = local.metadata_route_repair_script
   kubelet_config                = var.kubelet_config
   kubelet_config_update_script  = local.k8s_kubelet_config_update_script
   audit_policy_config           = ""
@@ -150,8 +152,7 @@ locals {
     local.multinetwork_overlay_enabled ? {
       node-external-ip = join(",", compact([local.multinetwork_transport_ipv4_enabled ? module.agents[k].ipv4_address : null, local.multinetwork_transport_ipv6_enabled ? module.agents[k].ipv6_address : null]))
       } : lookup(local.agent_external_ip_by_node, k, null) != null ? {
-      node-external-ip    = local.agent_external_ip_by_node[k]
-      flannel-external-ip = true
+      node-external-ip = local.agent_external_ip_by_node[k]
     } : {},
     local.disable_default_registry_endpoint_config,
     var.agent_nodes_custom_config,
@@ -260,7 +261,7 @@ resource "terraform_data" "agent_config" {
   }
 
   provisioner "remote-exec" {
-    inline = [local.k8s_config_update_script]
+    inline = ["export KH_ENCRYPTION_ROLE=agent", local.k8s_config_update_script]
   }
 
   depends_on = [
@@ -352,6 +353,35 @@ resource "terraform_data" "agents" {
 moved {
   from = null_resource.agents
   to   = terraform_data.agents
+}
+
+resource "terraform_data" "agent_os_update_services" {
+  for_each = local.agent_nodes
+
+  triggers_replace = {
+    agent_id         = module.agents[each.key].id
+    os_upgrade_state = var.automatically_upgrade_os ? "enabled" : "disabled"
+    service_policy   = "post-kubernetes-bootstrap-v4"
+  }
+
+  connection {
+    user           = "root"
+    private_key    = var.ssh_private_key
+    agent_identity = local.ssh_agent_identity
+    host           = local.agent_ips[each.key]
+    port           = var.ssh_port
+
+    bastion_host        = local.ssh_bastion.bastion_host
+    bastion_port        = local.ssh_bastion.bastion_port
+    bastion_user        = local.ssh_bastion.bastion_user
+    bastion_private_key = local.ssh_bastion.bastion_private_key
+  }
+
+  provisioner "remote-exec" {
+    inline = [local.os_update_services_reconcile_script]
+  }
+
+  depends_on = [terraform_data.agents]
 }
 
 resource "hcloud_volume" "longhorn_volume" {

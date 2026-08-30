@@ -130,7 +130,7 @@ variable "ssh_public_key" {
 
   validation {
     condition = can(regex(
-      "^(ssh-(rsa|ed25519)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh.com) [A-Za-z0-9+/=]+( [^\\r\\n]*)?$",
+      "^(ssh-(rsa|ed25519)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh[.]com) [A-Za-z0-9+/=]+( [^\\r\\n]*)?$",
       trimspace(var.ssh_public_key)
     ))
     error_message = "ssh_public_key must be a single-line OpenSSH public key with a supported key type, base64 key body, and optional single-line comment."
@@ -163,7 +163,7 @@ variable "ssh_additional_public_keys" {
     condition = alltrue([
       for key in var.ssh_additional_public_keys :
       trimspace(key) == "" || can(regex(
-        "^(ssh-(rsa|ed25519)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh.com) [A-Za-z0-9+/=]+( [^\\r\\n]*)?$",
+        "^(ssh-(rsa|ed25519)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh[.]com) [A-Za-z0-9+/=]+( [^\\r\\n]*)?$",
         trimspace(key)
       ))
     ])
@@ -1199,9 +1199,11 @@ variable "agent_nodepools" {
     labels                = list(string)
     annotations           = optional(map(string), {})
     hcloud_labels         = optional(map(string), {})
+    extra_firewall_ids    = optional(list(number), [])
     taints                = list(string)
     longhorn_volume_size  = optional(number)
     longhorn_mount_path   = optional(string, "/var/longhorn")
+    delete_protection     = optional(bool, false)
     append_random_suffix  = optional(bool, true)
     swap_size             = optional(string, "")
     zram_size             = optional(string, "")
@@ -1243,6 +1245,7 @@ variable "agent_nodepools" {
       labels                    = optional(list(string))
       annotations               = optional(map(string), {})
       hcloud_labels             = optional(map(string), {})
+      extra_firewall_ids        = optional(list(number), [])
       taints                    = optional(list(string))
       longhorn_volume_size      = optional(number)
       longhorn_mount_path       = optional(string, null)
@@ -1288,6 +1291,20 @@ variable "agent_nodepools" {
       )
     )
     error_message = "Names in agent_nodepools must be unique."
+  }
+
+  validation {
+    condition = alltrue(flatten([
+      for agent_nodepool in var.agent_nodepools : concat(
+        [for firewall_id in agent_nodepool.extra_firewall_ids : firewall_id > 0 && firewall_id == floor(firewall_id)],
+        flatten([
+          for agent_node in values(coalesce(agent_nodepool.nodes, {})) : [
+            for firewall_id in agent_node.extra_firewall_ids : firewall_id > 0 && firewall_id == floor(firewall_id)
+          ]
+        ])
+      )
+    ]))
+    error_message = "agent_nodepools extra_firewall_ids values must be positive integer Hetzner Firewall IDs."
   }
 
   validation {
@@ -1989,7 +2006,7 @@ variable "etcd_s3_backup" {
 }
 
 variable "enable_secrets_encryption" {
-  description = "Enable API server EncryptionConfiguration for Kubernetes Secrets at rest."
+  description = "Enable API server EncryptionConfiguration for Kubernetes Secrets at rest. In-place key rotation or disablement is rejected because a single-key replacement can make existing Secrets unreadable; use an explicit staged multi-key Kubernetes rotation procedure."
   type        = bool
   default     = false
 }
@@ -2435,7 +2452,17 @@ variable "firewall_ssh_source" {
 variable "extra_firewall_ids" {
   type        = list(number)
   default     = []
-  description = "Additional firewall IDs to attach to every control plane and agent node."
+  description = "Additional existing Hetzner Firewall IDs to attach to every public control-plane and agent server. The module-managed firewall uses one of Hetzner's five server firewall slots, leaving at most four unique extra IDs across all scopes."
+
+  validation {
+    condition     = alltrue([for firewall_id in var.extra_firewall_ids : firewall_id > 0 && firewall_id == floor(firewall_id)])
+    error_message = "extra_firewall_ids values must be positive integer Hetzner Firewall IDs."
+  }
+
+  validation {
+    condition     = length(distinct(var.extra_firewall_ids)) <= 4
+    error_message = "A public server can attach at most five Hetzner Firewalls. The module-managed firewall uses one slot, so extra_firewall_ids may contain at most four unique IDs."
+  }
 }
 
 variable "myipv4_ref" {
@@ -2610,7 +2637,17 @@ variable "cilium_version" {
 variable "calico_values" {
   type        = string
   default     = ""
-  description = "Just a stub for a future helm implementation. Now it can be used to replace the calico kustomize patch of the calico manifest."
+  description = "Replacement strategic-merge patch for the upstream Calico manifest installed by k3s. This input is not consumed by RKE2, which uses its bundled Calico chart."
+
+  validation {
+    condition = var.kubernetes_distribution != "k3s" || var.cni_plugin != "calico" || var.calico_values == "" || try(
+      trimspace(yamldecode(var.calico_values).apiVersion) != "" &&
+      trimspace(yamldecode(var.calico_values).kind) != "" &&
+      trimspace(yamldecode(var.calico_values).metadata.name) != "",
+      false
+    )
+    error_message = "calico_values must be empty or a valid Kubernetes strategic-merge patch with apiVersion, kind, and metadata.name."
+  }
 }
 
 variable "enable_longhorn" {

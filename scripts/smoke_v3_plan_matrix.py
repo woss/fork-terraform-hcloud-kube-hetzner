@@ -43,6 +43,9 @@ class Scenario:
     agent_nodepools_hcl: str | None = None
     skip_reason: str | None = None
     ingress_controller: str = "none"
+    expect_resource_values: tuple[tuple[str, dict[str, object]], ...] = ()
+    expect_resource_unknown_fields: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    expect_module_input_references: tuple[tuple[str, str, tuple[str, ...]], ...] = ()
 
 
 BASE_CONTROL_PLANE_NODEPOOLS_HCL = """
@@ -186,6 +189,136 @@ def scenarios(external_network_id: str | None) -> list[Scenario]:
             expect_success=True,
         ),
         Scenario(
+            name="agent-nodepool-delete-protection-valid",
+            extra_module_hcl="",
+            expect_success=True,
+            expect_resource_values=(
+                (
+                    'module.kube_hetzner.module.agents["0-0-agent"].hcloud_server.server',
+                    {"delete_protection": True, "rebuild_protection": True},
+                ),
+            ),
+            agent_nodepools_hcl="""
+            agent_nodepools = [
+              {
+                name              = "agent"
+                server_type       = "cx23"
+                location          = "nbg1"
+                labels            = []
+                taints            = []
+                count             = 1
+                delete_protection = true
+              }
+            ]
+            """,
+        ),
+        Scenario(
+            name="agent-map-delete-protection-valid",
+            extra_module_hcl="",
+            expect_success=True,
+            expect_resource_values=(
+                (
+                    'module.kube_hetzner.module.agents["0-7-agent"].hcloud_server.server',
+                    {"delete_protection": True, "rebuild_protection": True},
+                ),
+            ),
+            agent_nodepools_hcl="""
+            agent_nodepools = [
+              {
+                name              = "agent"
+                server_type       = "cx23"
+                location          = "nbg1"
+                labels            = []
+                taints            = []
+                delete_protection = true
+                nodes = {
+                  "7" = {}
+                }
+              }
+            ]
+            """,
+        ),
+        Scenario(
+            name="private-agent-extra-firewall-budget-ignored-valid",
+            extra_module_hcl="",
+            expect_success=True,
+            agent_nodepools_hcl="""
+            agent_nodepools = [
+              {
+                name               = "agent"
+                server_type        = "cx23"
+                location           = "nbg1"
+                labels             = []
+                taints             = []
+                count              = 1
+                enable_public_ipv4 = false
+                enable_public_ipv6 = false
+                extra_firewall_ids = [1, 2, 3, 4, 5]
+              }
+            ]
+            """,
+        ),
+        Scenario(
+            name="public-agent-extra-firewall-merge-valid",
+            extra_module_hcl="extra_firewall_ids = [101, 102]",
+            expect_success=True,
+            expect_resource_values=(
+                (
+                    'module.kube_hetzner.module.agents["0-7-agent"].hcloud_server.server',
+                    {"public_net": [{"ipv4_enabled": True, "ipv6_enabled": True}]},
+                ),
+            ),
+            expect_resource_unknown_fields=(
+                (
+                    'module.kube_hetzner.module.agents["0-7-agent"].hcloud_server.server',
+                    ("firewall_ids",),
+                ),
+            ),
+            expect_module_input_references=(
+                (
+                    "module.kube_hetzner.module.agents",
+                    "extra_firewall_ids",
+                    ("var.extra_firewall_ids", "each.value.extra_firewall_ids"),
+                ),
+            ),
+            agent_nodepools_hcl="""
+            agent_nodepools = [
+              {
+                name               = "agent"
+                server_type        = "cx23"
+                location           = "nbg1"
+                labels             = []
+                taints             = []
+                extra_firewall_ids = [102, 103]
+                nodes = {
+                  "7" = {
+                    extra_firewall_ids = [101, 104]
+                  }
+                }
+              }
+            ]
+            """,
+        ),
+        Scenario(
+            name="public-agent-extra-firewall-budget-invalid",
+            extra_module_hcl="",
+            expect_success=False,
+            expect_output=("A public server can attach at most five Hetzner Firewalls",),
+            agent_nodepools_hcl="""
+            agent_nodepools = [
+              {
+                name               = "agent"
+                server_type        = "cx23"
+                location           = "nbg1"
+                labels             = []
+                taints             = []
+                count              = 1
+                extra_firewall_ids = [1, 2, 3, 4, 5]
+              }
+            ]
+            """,
+        ),
+        Scenario(
             name="cilium-gateway-api-valid",
             extra_module_hcl="""
             cni_plugin                 = "cilium"
@@ -212,6 +345,15 @@ def scenarios(external_network_id: str | None) -> list[Scenario]:
             cni_plugin              = "cilium"
             cluster_ipv6_cidr       = "fd00:42::/56"
             service_ipv6_cidr       = "fd00:43::/112"
+            """,
+            expect_success=True,
+        ),
+        Scenario(
+            name="rke2-calico-legacy-values-ignored-valid",
+            extra_module_hcl="""
+            kubernetes_distribution = "rke2"
+            cni_plugin              = "calico"
+            calico_values           = "wireguardEnabled: true"
             """,
             expect_success=True,
         ),
@@ -923,8 +1065,18 @@ def run_init_with_retry(root: Path, env: dict[str, str], attempts: int = 3) -> s
 def run_plan_with_retry(root: Path, env: dict[str, str], attempts: int = 2) -> subprocess.CompletedProcess[str]:
     plan: subprocess.CompletedProcess[str] | None = None
     for _ in range(attempts):
+        (root / "plan.tfplan").unlink(missing_ok=True)
         plan = run(
-            ["terraform", "plan", "-refresh=false", "-lock=false", "-input=false", "-no-color", "-detailed-exitcode"],
+            [
+                "terraform",
+                "plan",
+                "-refresh=false",
+                "-lock=false",
+                "-input=false",
+                "-no-color",
+                "-detailed-exitcode",
+                "-out=plan.tfplan",
+            ],
             cwd=root,
             env=env,
         )
@@ -932,6 +1084,93 @@ def run_plan_with_retry(root: Path, env: dict[str, str], attempts: int = 2) -> s
             return plan
     assert plan is not None
     return plan
+
+
+def planned_resources(module: dict[str, object]) -> dict[str, dict[str, object]]:
+    resources: dict[str, dict[str, object]] = {}
+    for resource in module.get("resources", []):
+        if isinstance(resource, dict) and isinstance(resource.get("address"), str):
+            values = resource.get("values")
+            resources[resource["address"]] = values if isinstance(values, dict) else {}
+    for child in module.get("child_modules", []):
+        if isinstance(child, dict):
+            resources.update(planned_resources(child))
+    return resources
+
+
+def configured_module_calls(module: dict[str, object], prefix: str = "") -> dict[str, dict[str, object]]:
+    calls: dict[str, dict[str, object]] = {}
+    module_calls = module.get("module_calls", {})
+    if not isinstance(module_calls, dict):
+        return calls
+    for name, call in module_calls.items():
+        if not isinstance(name, str) or not isinstance(call, dict):
+            continue
+        address = f"{prefix}.module.{name}" if prefix else f"module.{name}"
+        calls[address] = call
+        child_module = call.get("module")
+        if isinstance(child_module, dict):
+            calls.update(configured_module_calls(child_module, address))
+    return calls
+
+
+def assert_planned_values(root: Path, env: dict[str, str], scenario: Scenario) -> str | None:
+    if not (
+        scenario.expect_resource_values
+        or scenario.expect_resource_unknown_fields
+        or scenario.expect_module_input_references
+    ):
+        return None
+    shown = run(["terraform", "show", "-json", "plan.tfplan"], cwd=root, env=env)
+    if shown.returncode != 0:
+        return f"terraform show failed\n{excerpt(shown.stdout)}"
+    try:
+        plan = json.loads(shown.stdout)
+        root_module = plan["planned_values"]["root_module"]
+        configuration_root = plan["configuration"]["root_module"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        return f"invalid plan JSON: {exc}"
+    resources = planned_resources(root_module)
+    for address, expected_values in scenario.expect_resource_values:
+        if address not in resources:
+            return f"planned resource {address!r} not found; available matches: {[key for key in resources if 'hcloud_server.server' in key]}"
+        actual_values = resources[address]
+        mismatches = {
+            key: {"expected": expected, "actual": actual_values.get(key)}
+            for key, expected in expected_values.items()
+            if actual_values.get(key) != expected
+        }
+        if mismatches:
+            return f"planned values for {address} did not match: {mismatches}"
+
+    resource_changes = {
+        change["address"]: change.get("change", {}).get("after_unknown", {})
+        for change in plan.get("resource_changes", [])
+        if isinstance(change, dict) and isinstance(change.get("address"), str)
+    }
+    for address, expected_unknown_fields in scenario.expect_resource_unknown_fields:
+        after_unknown = resource_changes.get(address)
+        if not isinstance(after_unknown, dict):
+            return f"resource change {address!r} was not found in plan JSON"
+        missing_unknown = [field for field in expected_unknown_fields if after_unknown.get(field) is not True]
+        if missing_unknown:
+            return f"resource {address} did not retain expected unknown fields: {missing_unknown}"
+
+    module_calls = configured_module_calls(configuration_root)
+    for address, input_name, required_references in scenario.expect_module_input_references:
+        call = module_calls.get(address)
+        if not isinstance(call, dict):
+            return f"configured module call {address!r} was not found in plan JSON"
+        expressions = call.get("expressions", {})
+        expression = expressions.get(input_name, {}) if isinstance(expressions, dict) else {}
+        references = expression.get("references", []) if isinstance(expression, dict) else []
+        missing_references = [reference for reference in required_references if reference not in references]
+        if missing_references:
+            return (
+                f"configured input {address}.{input_name} did not reference {missing_references}; "
+                f"actual references: {references}"
+            )
+    return None
 
 
 def excerpt(output: str, limit: int = 6000) -> str:
@@ -1001,6 +1240,12 @@ def main() -> int:
             if missing:
                 failures.append(f"{scenario.name}: missing expected output {missing}\n{excerpt(output)}")
                 print(f"FAIL {scenario.name}: missing expected output", flush=True)
+                continue
+
+            plan_contract_error = assert_planned_values(root, env, scenario)
+            if plan_contract_error:
+                failures.append(f"{scenario.name}: {plan_contract_error}")
+                print(f"FAIL {scenario.name}: planned contract did not match", flush=True)
                 continue
 
             print(f"PASS {scenario.name}", flush=True)

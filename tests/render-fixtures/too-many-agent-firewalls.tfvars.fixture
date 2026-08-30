@@ -1,0 +1,14 @@
+extra_firewall_ids = [101, 102]
+
+agent_nodepools = [
+  {
+    name               = "agent"
+    server_type        = "cx23"
+    location           = "nbg1"
+    labels             = []
+    taints             = []
+    count              = 1
+    os                 = "leapmicro"
+    extra_firewall_ids = [103, 104, 105]
+  }
+]

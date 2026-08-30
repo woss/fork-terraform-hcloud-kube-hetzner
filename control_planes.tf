@@ -67,6 +67,7 @@ module "control_planes" {
   audit_policy_config           = var.audit_policy_config
   audit_policy_update_script    = local.k3s_audit_policy_update_script
   cloudinit_write_files_common  = local.cloudinit_write_files_common
+  metadata_route_repair_script  = local.metadata_route_repair_script
   cloudinit_runcmd_common       = local.cloudinit_runcmd_common
   cloudinit_write_files_extra   = concat(each.value.extra_write_files, local.node_annotation_write_files_by_scope["control-plane:${each.key}"])
   cloudinit_runcmd_extra        = concat(local.tailscale_cloud_init_bootstrap_enabled ? [local.tailscale_bootstrap_script_static_control_plane_by_node[each.key]] : [], each.value.extra_runcmd, length(each.value.annotations) == 0 ? [] : local.node_annotations_enable_runcmd)
@@ -494,6 +495,7 @@ resource "terraform_data" "control_plane_config_rke2" {
     config           = sha1(yamlencode(local.rke2-config[each.key]))
     cni_values       = sha1(local.desired_cni_values)
     encryption       = sha1(local.secrets_encryption_config)
+    encryption_guard = "explicit-desired-state-v2"
   }
 
   connection {
@@ -517,7 +519,7 @@ resource "terraform_data" "control_plane_config_rke2" {
 
   provisioner "file" {
     content     = local.secrets_encryption_config
-    destination = "/tmp/encryption-config.yaml"
+    destination = local.secrets_encryption_staging_file
   }
 
   # Create /var/lib/rancher/rke2/server/manifests directory
@@ -572,6 +574,7 @@ resource "terraform_data" "control_plane_config" {
     control_plane_id = module.control_planes[each.key].id
     config           = sha1(yamlencode(local.k3s-config[each.key]))
     encryption       = sha1(local.secrets_encryption_config)
+    encryption_guard = "explicit-desired-state-v2"
   }
 
   connection {
@@ -596,7 +599,7 @@ resource "terraform_data" "control_plane_config" {
 
   provisioner "file" {
     content     = local.secrets_encryption_config
-    destination = "/tmp/encryption-config.yaml"
+    destination = local.secrets_encryption_staging_file
   }
 
   provisioner "remote-exec" {
@@ -808,6 +811,38 @@ resource "terraform_data" "control_planes" {
 moved {
   from = null_resource.control_planes
   to   = terraform_data.control_planes
+}
+
+resource "terraform_data" "control_plane_os_update_services" {
+  for_each = local.control_plane_nodes
+
+  triggers_replace = {
+    control_plane_id = module.control_planes[each.key].id
+    os_upgrade_state = var.automatically_upgrade_os ? "enabled" : "disabled"
+    service_policy   = "post-kubernetes-bootstrap-v4"
+  }
+
+  connection {
+    user           = "root"
+    private_key    = var.ssh_private_key
+    agent_identity = local.ssh_agent_identity
+    host           = local.control_plane_ips[each.key]
+    port           = var.ssh_port
+
+    bastion_host        = local.ssh_bastion.bastion_host
+    bastion_port        = local.ssh_bastion.bastion_port
+    bastion_user        = local.ssh_bastion.bastion_user
+    bastion_private_key = local.ssh_bastion.bastion_private_key
+  }
+
+  provisioner "remote-exec" {
+    inline = [local.os_update_services_reconcile_script]
+  }
+
+  depends_on = [
+    terraform_data.control_planes,
+    terraform_data.control_planes_rke2,
+  ]
 }
 
 resource "hcloud_volume" "attached_control_plane_volume" {

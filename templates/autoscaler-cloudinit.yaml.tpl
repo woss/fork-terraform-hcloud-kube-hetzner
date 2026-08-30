@@ -2,6 +2,12 @@
 
 write_files:
 
+- path: /etc/kube-hetzner/managed-authorized-keys
+  content: ${base64encode(sshAuthorizedKeysContent)}
+  encoding: base64
+  owner: root:root
+  permissions: "0600"
+
 ${cloudinit_write_files_common}
 
 %{ if os == "leapmicro" ~}
@@ -66,13 +72,13 @@ ${cloudinit_write_files_common}
     WantedBy=sysinit.target
 %{ endif ~}
 
-- content: ${base64encode(k3s_config)}
-  encoding: base64
+- content: ${base64gzip(k3s_config)}
+  encoding: gzip+base64
   path: /tmp/config.yaml
 
 # Distro-specific agent installation script rendered by the module.
-- content: ${base64encode(install_k8s_agent_script)}
-  encoding: base64
+- content: ${base64gzip(install_k8s_agent_script)}
+  encoding: gzip+base64
   path: /var/pre_install/install-k8s-agent.sh
 
 # Apply DNS config
@@ -103,9 +109,9 @@ preserve_hostname: true
 bootcmd:
   # Leap Micro/MicroOS health-checker can form a systemd ordering cycle with
   # cloud-final. Autoscaler nodes rely on cloud-final for Kubernetes bootstrap,
-  # so mask it before the final cloud-init stage is scheduled.
-  - [sh, -c, 'systemctl disable --now health-checker.service 2>/dev/null || true']
-  - [sh, -c, 'systemctl mask health-checker.service 2>/dev/null || true']
+  # so mask it before the final cloud-init stage is scheduled. Scope the
+  # workaround to first boot so later reboots retain the restored health check.
+  - [cloud-init-per, instance, kube-hetzner-disable-health-checker, sh, -c, 'systemctl disable --now health-checker.service 2>/dev/null || true; systemctl mask health-checker.service 2>/dev/null || true']
 
 runcmd:
 
@@ -370,3 +376,49 @@ ${indent(2, "\n${chomp(tailscale_bootstrap_script)}")}
 
 # Start the Kubernetes agent install script
 - ['/bin/bash', '/var/pre_install/install-k8s-agent.sh']
+# Restore transactional boot health checks after Kubernetes bootstrap. The
+# service is enabled for the next boot but deliberately not started during
+# cloud-final, avoiding the ordering cycle that required the temporary mask.
+# Automatic updates are restored only when requested, and every operation is
+# fail-closed so a node cannot silently join without its configured patching policy.
+- |
+  (
+    set -eu
+    unit_exists() {
+      systemctl list-unit-files --no-legend "$1" 2>/dev/null | awk -v unit="$1" '$1 == unit { found = 1 } END { exit !found }'
+    }
+
+    if unit_exists health-checker.service; then
+      systemctl unmask health-checker.service
+      systemctl enable health-checker.service
+      systemctl is-enabled --quiet health-checker.service
+    else
+      echo "health-checker.service is not installed in this image; skipping restore"
+    fi
+    if unit_exists transactional-update.timer; then
+%{if automatically_upgrade_os~}
+      systemctl enable --now transactional-update.timer
+      systemctl is-enabled --quiet transactional-update.timer
+      systemctl is-active --quiet transactional-update.timer
+%{else~}
+      systemctl disable --now transactional-update.timer
+      if systemctl is-enabled --quiet transactional-update.timer || systemctl is-active --quiet transactional-update.timer; then
+        echo "ERROR: transactional-update.timer remained enabled or active" >&2
+        exit 1
+      fi
+%{endif~}
+    else
+      echo "transactional-update.timer is not installed in this image; skipping update-policy reconciliation"
+    fi
+  )
+  KH_UPDATE_POLICY_STATUS=$?
+  if [ "$KH_UPDATE_POLICY_STATUS" -ne 0 ]; then
+    exit "$KH_UPDATE_POLICY_STATUS"
+  fi
+
+# Run the fail-closed metadata repair after Kubernetes and host policy setup so
+# a metadata outage cannot prevent the autoscaler node from joining first.
+- |
+  (
+${indent(2, "\n${chomp(metadata_route_repair_script)}")}
+  ) || exit 1
