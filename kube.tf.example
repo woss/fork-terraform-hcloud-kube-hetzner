@@ -378,6 +378,8 @@ module "kube-hetzner" {
       # Attach existing Hetzner Cloud Firewalls only to this agent nodepool.
       # These IDs are merged with the module-wide extra_firewall_ids list.
       # Individual entries in a nodes map may add further IDs.
+      # The module-managed firewall uses one of Hetzner's five server firewall slots,
+      # leaving at most four unique extra IDs across all scopes.
       # extra_firewall_ids = [123456]
 
       # In node_transport_mode = "tailscale", every active agent nodepool must
@@ -426,13 +428,9 @@ module "kube-hetzner" {
       # longhorn_volume_size = 20
 
       # Protect every server in this nodepool from accidental deletion (default: false).
-      # When true, Hetzner delete and rebuild protection is enabled on the servers, which
-      # also blocks "terraform destroy" until the protection is disabled again. Useful for
-      # nodes holding database data on local/node storage.
-      # NOTE: despite the hcloud provider docs, protection is NOT auto-lifted before a delete
-      # (only hcloud_zone_rrset does that), so this is a real two-apply gate: set
-      # delete_protection = false and apply once before a destroy/count decrease can remove the
-      # node. See https://github.com/hetznercloud/terraform-provider-hcloud/issues/1206
+      # This enables Hetzner API delete and rebuild protection. Current hcloud provider
+      # behavior rejects removal while protection is enabled, so disable it explicitly before
+      # an intentional count decrease or destroy. This is not a backup or prevent_destroy.
       # delete_protection = true
       # Set any path inside /var/ folder to have the ability to use an additional storage class along with the default one, which by default must be set in helm values to
       # /var/longhorn
@@ -616,6 +614,7 @@ module "kube-hetzner" {
   #
   # ⚠️ Setting labels and taints will only work on cluster-autoscaler images versions released after > 20 October 2023. Or images built from master after that date.
   # Node annotations are applied by cloud-init once when an autoscaler-created node joins. Later changes affect only future autoscaled nodes.
+  # Hetzner limits server user_data to 32 KiB. The module compresses large payloads and rejects oversized rendered autoscaler cloud-init during plan.
   #
   # * Example below:
   # autoscaler_nodepools = [
@@ -742,11 +741,9 @@ module "kube-hetzner" {
   # cluster_autoscaler_metrics_firewall_source = ["myipv4", "10.0.0.0/8"]
 
   # Enable delete protection on compatible resources to prevent accidental deletion.
-  # Hetzner delete protection also blocks "terraform destroy" (and OpenTofu): the destroy
-  # fails until the protection is disabled, see https://github.com/hetznercloud/terraform-provider-hcloud/issues/1014
-  # Note: contrary to the provider docs, protection is NOT auto-lifted before a delete (only
-  # hcloud_zone_rrset does), so it is a real two-apply gate rather than a silent bypass, see
-  # https://github.com/hetznercloud/terraform-provider-hcloud/issues/1206
+  # Current hcloud provider behavior rejects removal while protection is enabled. Disable
+  # protection explicitly before an intentional destroy; do not treat it as a backup or
+  # Terraform prevent_destroy replacement. See provider discussion #1206.
   # To protect the nodes/servers themselves, use the per-nodepool "delete_protection" option on agent_nodepools above.
   # enable_delete_protection = {
   #   floating_ip   = true
@@ -778,6 +775,8 @@ module "kube-hetzner" {
 
   # Enable Kubernetes Secrets encryption at rest on control plane nodes.
   # This writes an EncryptionConfiguration file and wires kube-apiserver to use it.
+  # Do not toggle this off or replace its generated key in place. A safe key change requires
+  # a staged multi-key Kubernetes rotation so existing Secrets remain decryptable.
   # enable_secrets_encryption = true
 
   # To enable Hetzner Storage Box support, you can enable csi-driver-smb, default is "false".
@@ -1312,6 +1311,7 @@ module "kube-hetzner" {
   # firewall_ssh_source = ["1.2.3.4/32"]
 
   # Optionally attach additional existing Hetzner firewalls to all control plane and agent nodes.
+  # The module firewall uses one of the five slots; at most four unique extras may apply to a server.
   # extra_firewall_ids = [123456]
 
   # By default, SELinux is enabled in enforcing mode on all nodes. For container-specific SELinux issues,
@@ -1930,6 +1930,8 @@ replicas: 3
   # optional_bastion_host = null
 
   # Full advanced chart/value replacements.
+  # K3s only: replacement strategic-merge patch for the installed Calico manifest.
+  # RKE2 uses its bundled Calico chart and does not consume this value.
   # calico_values = ""
   # traefik_resource_values = {}
 

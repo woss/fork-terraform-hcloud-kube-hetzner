@@ -1294,6 +1294,20 @@ variable "agent_nodepools" {
   }
 
   validation {
+    condition = alltrue(flatten([
+      for agent_nodepool in var.agent_nodepools : concat(
+        [for firewall_id in agent_nodepool.extra_firewall_ids : firewall_id > 0 && firewall_id == floor(firewall_id)],
+        flatten([
+          for agent_node in values(coalesce(agent_nodepool.nodes, {})) : [
+            for firewall_id in agent_node.extra_firewall_ids : firewall_id > 0 && firewall_id == floor(firewall_id)
+          ]
+        ])
+      )
+    ]))
+    error_message = "agent_nodepools extra_firewall_ids values must be positive integer Hetzner Firewall IDs."
+  }
+
+  validation {
     condition = alltrue([
       for agent_nodepool in var.agent_nodepools :
       agent_nodepool.os == null || agent_nodepool.os == "microos" || agent_nodepool.os == "leapmicro"
@@ -1992,7 +2006,7 @@ variable "etcd_s3_backup" {
 }
 
 variable "enable_secrets_encryption" {
-  description = "Enable API server EncryptionConfiguration for Kubernetes Secrets at rest."
+  description = "Enable API server EncryptionConfiguration for Kubernetes Secrets at rest. In-place key rotation or disablement is rejected because a single-key replacement can make existing Secrets unreadable; use an explicit staged multi-key Kubernetes rotation procedure."
   type        = bool
   default     = false
 }
@@ -2438,7 +2452,17 @@ variable "firewall_ssh_source" {
 variable "extra_firewall_ids" {
   type        = list(number)
   default     = []
-  description = "Additional firewall IDs to attach to every control plane and agent node."
+  description = "Additional existing Hetzner Firewall IDs to attach to every public control-plane and agent server. The module-managed firewall uses one of Hetzner's five server firewall slots, leaving at most four unique extra IDs across all scopes."
+
+  validation {
+    condition     = alltrue([for firewall_id in var.extra_firewall_ids : firewall_id > 0 && firewall_id == floor(firewall_id)])
+    error_message = "extra_firewall_ids values must be positive integer Hetzner Firewall IDs."
+  }
+
+  validation {
+    condition     = length(distinct(var.extra_firewall_ids)) <= 4
+    error_message = "A public server can attach at most five Hetzner Firewalls. The module-managed firewall uses one slot, so extra_firewall_ids may contain at most four unique IDs."
+  }
 }
 
 variable "myipv4_ref" {
@@ -2613,7 +2637,7 @@ variable "cilium_version" {
 variable "calico_values" {
   type        = string
   default     = ""
-  description = "Just a stub for a future helm implementation. Now it can be used to replace the calico kustomize patch of the calico manifest."
+  description = "Replacement strategic-merge patch for the upstream Calico manifest installed by k3s. This input is not consumed by RKE2, which uses its bundled Calico chart."
 }
 
 variable "enable_longhorn" {

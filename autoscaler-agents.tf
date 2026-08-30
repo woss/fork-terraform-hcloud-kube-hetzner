@@ -169,6 +169,15 @@ resource "terraform_data" "configure_autoscaler" {
       condition     = try(provider::semvers::compare(trimprefix(var.cluster_autoscaler_version, "v"), "1.33.0"), -1) >= 0
       error_message = "autoscaler_nodepools require cluster_autoscaler_version v1.33.0 or newer because kube-hetzner mounts the Hetzner cluster config through HCLOUD_CLUSTER_CONFIG_FILE."
     }
+
+    precondition {
+      condition = alltrue(flatten([
+        for cluster_config in values(local.desired_cluster_config_by_network) : [
+          for node_config in values(cluster_config.nodeConfigs) : length(node_config.cloudInit) <= 32768
+        ]
+      ]))
+      error_message = "An autoscaler node pool rendered cloud-init larger than Hetzner Cloud's 32 KiB user_data limit. Reduce custom config/write_files/runcmd content for that pool."
+    }
   }
 }
 moved {

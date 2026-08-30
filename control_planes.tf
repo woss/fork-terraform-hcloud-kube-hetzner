@@ -494,6 +494,7 @@ resource "terraform_data" "control_plane_config_rke2" {
     config           = sha1(yamlencode(local.rke2-config[each.key]))
     cni_values       = sha1(local.desired_cni_values)
     encryption       = sha1(local.secrets_encryption_config)
+    encryption_guard = "explicit-desired-state-v2"
   }
 
   connection {
@@ -517,7 +518,7 @@ resource "terraform_data" "control_plane_config_rke2" {
 
   provisioner "file" {
     content     = local.secrets_encryption_config
-    destination = "/tmp/encryption-config.yaml"
+    destination = local.secrets_encryption_staging_file
   }
 
   # Create /var/lib/rancher/rke2/server/manifests directory
@@ -572,6 +573,7 @@ resource "terraform_data" "control_plane_config" {
     control_plane_id = module.control_planes[each.key].id
     config           = sha1(yamlencode(local.k3s-config[each.key]))
     encryption       = sha1(local.secrets_encryption_config)
+    encryption_guard = "explicit-desired-state-v2"
   }
 
   connection {
@@ -596,7 +598,7 @@ resource "terraform_data" "control_plane_config" {
 
   provisioner "file" {
     content     = local.secrets_encryption_config
-    destination = "/tmp/encryption-config.yaml"
+    destination = local.secrets_encryption_staging_file
   }
 
   provisioner "remote-exec" {

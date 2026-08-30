@@ -147,7 +147,7 @@ variable "backups" {
 }
 
 variable "delete_protection" {
-  description = "Enable Hetzner Cloud delete and rebuild protection on the server. Blocks deletion (including terraform destroy) until disabled. Protection is not auto-lifted before a delete (see hcloud provider issue #1206), so it acts as a two-apply gate."
+  description = "Enable Hetzner Cloud delete and rebuild protection on the server. Current provider behavior rejects deletion while protection is enabled, so disable it explicitly before intentional removal. This API control is not a backup, Terraform prevent_destroy, or a guarantee of atomic full-stack destroy behavior."
   type        = bool
   default     = false
 }

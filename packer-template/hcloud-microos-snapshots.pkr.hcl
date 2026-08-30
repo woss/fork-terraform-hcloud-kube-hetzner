@@ -520,6 +520,15 @@ EOF
     [ -f /etc/timezone ] && [ "$(cat /etc/timezone)" = "$timezone" ] \
       || { echo "ERROR: timezone name is missing from the committed snapshot" >&2; exit 1; }
 EOF
+
+    # /root is a persistent btrfs subvolume, outside the transactional root.
+    # Remove Packer/Hetzner bootstrap keys on the live filesystem so they are
+    # not inherited by every server created from the image snapshot.
+    rm -f /root/.ssh/authorized_keys /root/.ssh/authorized_keys.kube-hetzner
+    if [ -e /root/.ssh/authorized_keys ] || [ -e /root/.ssh/authorized_keys.kube-hetzner ]; then
+      echo "ERROR: SSH authorized keys remain in the persistent root subvolume" >&2
+      exit 1
+    fi
     sleep 1 && udevadm settle
   EOT
 }

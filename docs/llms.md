@@ -143,6 +143,8 @@ module "kube-hetzner" {
   ssh_private_key = file("~/.ssh/id_ed25519")
   # You can add additional SSH public Keys to grant other team members root access to your cluster nodes.
   # ssh_additional_public_keys = []
+  # Preserve unrelated out-of-band root keys by default. Set true to manage the file exclusively.
+  # ssh_authorized_keys_exclusive = false
 ```
 
 * **`ssh_public_key` (Obligatory):**
@@ -161,6 +163,10 @@ module "kube-hetzner" {
   * **Purpose:** A list of strings, where each string is the content of an additional SSH public key. These keys will also be added to `authorized_keys` on the nodes.
   * **Use Case:** Granting SSH access to other team members or automated systems without sharing your primary private key.
   * **Format:** `ssh_additional_public_keys = [file("~/.ssh/teammate1.pub"), "ssh-rsa AAAAB3NzaC1yc2EAAA... user@host"]`
+* **`ssh_authorized_keys_exclusive` (Boolean, Optional):**
+  * **Default:** `false`.
+  * **Purpose:** Controls ownership of `/root/.ssh/authorized_keys`. The default reconciles module-managed key identities while preserving unrelated keys added by operators or other trusted automation. Set `true` only when kube-hetzner should replace the file with exactly `ssh_public_key` plus `ssh_additional_public_keys`.
+  * **Security:** Removing a module-managed key revokes that identity in either mode, including stale copies carrying restrictive or forced-command options. Exclusive mode can lock out intentionally out-of-band access, so validate the managed key set first.
 
 ```terraform
   # You can also add additional SSH public Keys which are saved in the hetzner cloud by a label.
@@ -562,11 +568,13 @@ The example shows three control plane nodepools, each with one node, in differen
       * Attaches existing Hetzner Cloud Firewalls only to servers in this static agent nodepool.
       * The nodepool list is merged with the module-wide `extra_firewall_ids`; entries in `nodes[*].extra_firewall_ids` add further IDs for individual nodes.
       * Use this instead of a separate `hcloud_firewall_attachment` when the same servers are managed by this module, so one `hcloud_server.firewall_ids` owner retains a convergent plan.
+      * Hetzner permits five Firewalls per server. The module-managed firewall uses one slot, so the combined global, nodepool, and node lists may contain at most four unique IDs.
+      * If a standalone attachment already owns the relationship, use the state-only handoff in [Day-2 Operations](operations.md#handoff-an-existing-firewall-attachment) before applying this setting.
       * When both public interfaces are disabled, firewall IDs are intentionally not attached because Hetzner Cloud Firewalls apply only to public networking.
     * **`delete_protection` (Boolean, Optional, specific to agent nodepools):**
       * Default: `false`.
-      * If `true`, enables Hetzner delete and rebuild protection on every server in this nodepool, protecting them from accidental deletion. While enabled it also blocks `terraform destroy` — set it back to `false` and apply before destroying the nodes. Useful for nodes storing database data on local/node storage. See [terraform-provider-hcloud#1014](https://github.com/hetznercloud/terraform-provider-hcloud/issues/1014).
-      * **Important — the protection is a genuine two-apply gate:** The hcloud provider's documentation claims it automatically lifts delete protection before deleting a resource, but in practice it does **not** — a maintainer audit found that of all hcloud resources only `hcloud_zone_rrset` lifts protection automatically; `hcloud_server` (and every other resource) does not. A `terraform destroy`, or reducing a nodepool `count`, therefore *fails* on the protected server instead of silently removing the protection, so you must explicitly set `delete_protection = false` and run one `apply` before a second `apply`/`destroy` can remove the node. This is the intended behavior for this feature — it makes the flag behave like AWS RDS deletion protection and guards against an accidental `terraform apply` recreating a node and losing its local database storage (and its legacy pricing). See the discussion in [terraform-provider-hcloud#1206](https://github.com/hetznercloud/terraform-provider-hcloud/issues/1206).
+      * If `true`, enables Hetzner API delete and rebuild protection on every static server in the nodepool. Current tested hcloud provider behavior rejects deletion while it remains enabled, so disable it explicitly before an intentional count decrease or destroy. See [terraform-provider-hcloud#1206](https://github.com/hetznercloud/terraform-provider-hcloud/issues/1206).
+      * This is a provider/API safety control, not a backup, Terraform `prevent_destroy`, durable storage, or a guarantee that a full-stack destroy is atomic. Protect persistent data independently.
     * **`longhorn_volume_size` (Number, Optional, specific to agent nodepools if Longhorn is enabled):**
       * If `enable_longhorn = true` (a global module setting), this attribute can be added to an agent nodepool definition.
       * **Purpose:** Instructs the module to create a Hetzner Cloud Volume of the specified size (in GB, e.g., `20` for 20GB) for *each node* in this pool. Longhorn will then be configured to use these dedicated Hetzner Volumes for its storage replicas instead of using the node's local disk.
@@ -795,6 +803,7 @@ The example shows three control plane nodepools, each with one node, in differen
   * **Architecture Constraint (⚠️):** "you can only choose either x86 instances or ARM server types for ALL autoscaler nodepools." This implies a limitation in how the module or the Hetzner cloud provider for Cluster Autoscaler handles mixed-architecture autoscaling groups. You must commit to one architecture (e.g., all `cx` series or all `cax` series) for the pools managed by the autoscaler.
   * **Labels/Taints Versioning (⚠️):** The ability to set `labels` and `taints` directly in the `autoscaler_nodepools` definition depends on using a sufficiently new version of the Cluster Autoscaler image.
   * **Local Storage Scale-Down:** Cluster Autoscaler does not remove nodes that run pods with local storage by default. For disposable local data, use `cluster_autoscaler_extra_args = ["--skip-nodes-with-local-storage=false"]` or annotate only the relevant pods with `cluster-autoscaler.kubernetes.io/safe-to-evict: "true"`.
+  * **Cloud-Init Size:** Hetzner Cloud accepts at most 32 KiB of server `user_data`. The module compresses large autoscaler cloud-init files and enforces the final rendered limit during `terraform plan`; reduce custom agent config, kubelet/registry config, annotations, or bootstrap commands if the guard fails.
   * **Nodepool Attributes (per map within `autoscaler_nodepools`):**
     * **`name` (String, Obligatory):** A unique name for this autoscaled nodepool.
     * **`server_type` (String, Obligatory):** The Hetzner server type for nodes created in this pool (e.g., `cx33`, `cax21`). Must adhere to the single-architecture constraint mentioned above.
@@ -955,7 +964,7 @@ The example shows three control plane nodepools, each with one node, in differen
 * **`enable_delete_protection` (Map of Booleans, Optional):**
   * **Purpose:** Enables Hetzner Cloud's "delete protection" feature on specific resource types created by this module.
   * **Mechanism:** When delete protection is enabled on a resource in Hetzner Cloud, it cannot be deleted directly from the Hetzner Cloud Console (UI or hcloud CLI) until the protection is first disabled.
-  * **Terraform Interaction:** Hetzner delete protection *also* blocks `terraform destroy` (and OpenTofu): the destroy fails while protection is enabled, so the flag must be set back to `false` and applied before the resource can be destroyed. See [terraform-provider-hcloud#1014](https://github.com/hetznercloud/terraform-provider-hcloud/issues/1014). Despite the hcloud provider docs stating that protection is automatically lifted before a delete, this does not actually happen for these resource types (a maintainer audit found only `hcloud_zone_rrset` does so) — so protection acts as a real two-apply gate rather than being silently bypassed. See [terraform-provider-hcloud#1206](https://github.com/hetznercloud/terraform-provider-hcloud/issues/1206).
+  * **Terraform Interaction:** Current tested hcloud provider behavior rejects deletion while protection is enabled. Disable it explicitly before an intentional destroy and review the resulting plan. Provider behavior is not a substitute for Terraform `prevent_destroy` or independent backups; see [terraform-provider-hcloud#1206](https://github.com/hetznercloud/terraform-provider-hcloud/issues/1206).
   * **Scope:**
     * `floating_ip = true`: Protects Hetzner Floating IPs (e.g., for egress nodepools).
     * `load_balancer = true`: Protects the Hetzner Load Balancer.
@@ -3373,7 +3382,8 @@ These variables are part of the current v3 module contract and should be conside
 
 * **`extra_firewall_ids` (List Number, Optional):**
   * **Default:** `[]`.
-  * **Purpose:** Attaches additional existing Hetzner firewall IDs to every managed control-plane and agent node.
+  * **Purpose:** Attaches additional existing Hetzner firewall IDs to every public managed control-plane and agent node. At most four unique extras can apply to one server because the module-managed firewall occupies the fifth Hetzner slot.
+  * **Ownership:** Do not also manage the same attachment with `hcloud_firewall_attachment`; use the state-only handoff in [Day-2 Operations](operations.md#handoff-an-existing-firewall-attachment).
 
 * **`exclude_agents_from_external_load_balancers` (Boolean, Optional):**
   * **Default:** `false`.
@@ -3457,7 +3467,9 @@ These variables are part of the current v3 module contract and should be conside
 
 * **`calico_values` (String, Optional):**
   * **Default:** `""`.
-  * **Purpose:** Replaces the Calico kustomize patch used by the current Calico install path.
+  * **Purpose:** Replaces the strategic-merge patch applied to the upstream Calico manifest installed by K3s.
+  * **RKE2 Boundary:** RKE2 uses its bundled Calico chart and does not consume this value.
+  * **Existing Clusters:** The patch is applied on the next Kustomization run, but Calico does not rewrite an existing IPPool CIDR automatically. Use a controlled IPPool migration rather than deleting an in-use pool.
 
 * **`cert_manager_version` / `longhorn_version` / `rancher_version` (String, Optional):**
   * **Default:** `"*"`.

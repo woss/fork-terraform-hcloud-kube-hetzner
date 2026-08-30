@@ -7,15 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### ⚠️ Upgrade Notes
+
+- **Additional firewall ownership:** `extra_firewall_ids` are authoritative through each module-managed server. If the same server/firewall relationship is currently managed by a standalone `hcloud_firewall_attachment`, follow the state-only ownership handoff in [`docs/operations.md`](docs/operations.md#handoff-an-existing-firewall-attachment) before applying; two Terraform resources must not manage the same attachment.
+- **Existing autoscaler nodes:** new autoscaler nodes restore both `health-checker.service` and the configured `transactional-update.timer` state after bootstrap. Existing autoscaler nodes retain their original cloud-init; use the in-place service repair in [`docs/operations.md`](docs/operations.md#repair-existing-autoscaler-update-services) or recycle them gradually. Static nodes are repaired automatically on the next apply.
+- **Existing metadata routes:** the metadata-route correction is cloud-init behavior for new or replaced nodes. Existing affected nodes must be repaired in place or replaced one at a time; see [`docs/operations.md`](docs/operations.md#repair-an-existing-hetzner-metadata-route).
+- **Existing K3s Calico clusters:** `calico_values` now reaches the K3s Kustomization and the patch is applied on the next run, rolling the cluster-wide `calico-node` DaemonSet. Use a maintenance window and verify node networking. An existing Calico IPPool CIDR is not changed automatically; use Calico's controlled IPPool migration procedure rather than deleting an in-use pool. RKE2 does not consume `calico_values`.
+- **Secrets encryption:** existing control planes repair the EncryptionConfiguration owner, mode, and SELinux context during the next configuration run. In-place key replacement or disabling encryption is rejected because a one-key swap can make existing Secrets unreadable. This release has no ownership handoff or multi-key input; keep the original Terraform state/key or migrate to a new cluster when rotation is required.
+
 ### 🚀 New Features
 
-- Added a per-nodepool `delete_protection` option (bool, default `false`) to `agent_nodepools`. When enabled, Hetzner delete and rebuild protection is set on every server in the nodepool, guarding nodes (e.g. those holding database data on local storage) against accidental deletion. Existing clusters are unaffected until the flag is set.
+- Static agent nodepools and individual map-backed agent nodes can now add scoped `extra_firewall_ids`. The effective list is the union of global, nodepool, and node IDs, with plan-time enforcement of Hetzner's five-firewall-per-server limit (#2271; thanks @tiran133).
+- Added an opt-in per-nodepool `delete_protection` setting for static agent servers. It enables Hetzner delete and rebuild protection without changing existing clusters; it is an API safety control, not a backup or Terraform `prevent_destroy` replacement (#2264; thanks @stefan-sommer-osp).
 
 ### 🐛 Bug Fixes
 
-- Fixed K3s agents with floating IPs receiving the server-only `flannel-external-ip` flag, which prevented the agent service from starting. Floating-IP agents continue to advertise `node-external-ip`.
-- Cluster Autoscaler nodes now re-enable `transactional-update.timer` at the end of cloud-init when `automatically_upgrade_os` is true (the default). The shared runcmd preamble disables the timer for the duration of first boot and only `terraform_data.os_upgrade_toggle` re-enabled it, which exists per `hcloud_server` and therefore never runs for autoscaler-created nodes; those nodes stayed on the snapshot's packages indefinitely and never produced the `/var/run/reboot-required` sentinel kured reboots on. Existing autoscaled nodes keep their current user-data until the autoscaler recycles them.
-- Kept the Hetzner metadata service reachable when the private-network DHCP server advertises a classless static route (option 121 / RFC 3442) for `169.254.169.254` via the private gateway. That path black-holes on affected networks, and because the offered route is a `/32` it beats the public default route by longest-prefix-match at any metric, so `ipv4.never-default` and `ipv4.route-metric` on the private connection could not prevent it; `hcloud-csi-node` crashlooped on `failed to fetch server ID from metadata service` and stalled the DaemonSet rollout. All node types, including autoscaler nodes, now pin the same `/32` via the public gateway at a lower metric, persisted in the public connection profile so it survives DHCP lease renewals and reboots. Nodes with no route to the public gateway are left untouched, since there metadata legitimately traverses the private network (#2268).
+- Kept autoscaler-created server `user_data` below Hetzner Cloud's 32 KiB API limit by compressing large cloud-init payloads before embedding them, and added a plan-time size guard so oversized custom autoscaler configuration fails with an actionable error instead of leaving the node group in API backoff.
+- Fixed fresh Leap Micro/MicroOS nodes rejecting Terraform's first SSH connection when an image snapshot retained the same root public key with a forced-command restriction. First boot now replaces stale options by key identity while preserving unrelated operator keys, and both Packer finalizers remove bootstrap authorized keys from the persistent `/root` subvolume before image capture.
+- Fixed K3s agents with floating IPs receiving the server-only `flannel-external-ip` flag, which prevented the agent service from starting. Existing static agents reconcile their config and restart in place without HCloud server replacement (#2270, #2272; thanks @redcapcloud and @tiran133).
+- Restored `health-checker.service` and the requested `transactional-update.timer` state after static and autoscaler bootstrap, with fail-closed verification instead of silently suppressing service errors (#2266, #2267; thanks @LilDjaga).
+- Kept the Hetzner metadata service reachable when private-network DHCP advertises a black-holed direct `/32` route for `169.254.169.254`. New nodes reconcile the exact NetworkManager route through the public gateway, reapply the profile, verify the selected route, and verify metadata access; indirect/private-only paths remain untouched (#2268, #2269; thanks @karsten42).
+- Applied `calico_values` as a K3s-only Kustomization patch instead of uploading and then ignoring it. RKE2 continues to use its bundled Calico chart (#2265; thanks @beslovas).
+- Hardened RKE2 and K3s Secrets EncryptionConfiguration handling: root-only staging and destination permissions, SELinux-aware labeling, key-change/disablement rejection, cleanup on failure, and config rollback when a restart fails. This also fixes RKE2 bootstrap on SELinux-enforcing nodes (#2263; thanks @antony-jr).
 - Made the generated-site contract test portable to clean GitHub Actions runners instead of requiring undeclared `rg`. CI installs Zsh and Fish and fails closed when a documented shell verifier is missing; local runs print an explicit skip when an optional shell is unavailable.
 
 ### 🔧 Changes
@@ -45,7 +58,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### 🚀 New Features
 
 - Static control-plane and agent nodes now advertise dual-stack `node-ip` values that match configured cluster CIDR families, making the existing Cilium IPv6 CIDR inputs plan-validated on the standard private-network topology where validation passes (#2170, #2244, #2245; thanks @mgazza, @bkero).
-- Static agent nodepools and individual map-backed agent nodes can now add scoped `extra_firewall_ids`. The module merges them with global firewall IDs and keeps the owning `hcloud_server` resource authoritative, avoiding perpetual detach plans caused by a competing `hcloud_firewall_attachment`.
 
 ### 🐛 Bug Fixes
 

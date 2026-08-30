@@ -43,6 +43,7 @@ class Scenario:
     agent_nodepools_hcl: str | None = None
     skip_reason: str | None = None
     ingress_controller: str = "none"
+    expect_resource_values: tuple[tuple[str, dict[str, object]], ...] = ()
 
 
 BASE_CONTROL_PLANE_NODEPOOLS_HCL = """
@@ -189,7 +190,12 @@ def scenarios(external_network_id: str | None) -> list[Scenario]:
             name="agent-nodepool-delete-protection-valid",
             extra_module_hcl="",
             expect_success=True,
-            expect_output=("delete_protection", "rebuild_protection"),
+            expect_resource_values=(
+                (
+                    'module.kube_hetzner.module.agents["0-0-agent"].hcloud_server.server',
+                    {"delete_protection": True, "rebuild_protection": True},
+                ),
+            ),
             agent_nodepools_hcl="""
             agent_nodepools = [
               {
@@ -200,6 +206,32 @@ def scenarios(external_network_id: str | None) -> list[Scenario]:
                 taints            = []
                 count             = 1
                 delete_protection = true
+              }
+            ]
+            """,
+        ),
+        Scenario(
+            name="agent-map-delete-protection-valid",
+            extra_module_hcl="",
+            expect_success=True,
+            expect_resource_values=(
+                (
+                    'module.kube_hetzner.module.agents["0-7-agent"].hcloud_server.server',
+                    {"delete_protection": True, "rebuild_protection": True},
+                ),
+            ),
+            agent_nodepools_hcl="""
+            agent_nodepools = [
+              {
+                name              = "agent"
+                server_type       = "cx23"
+                location          = "nbg1"
+                labels            = []
+                taints            = []
+                delete_protection = true
+                nodes = {
+                  "7" = {}
+                }
               }
             ]
             """,
@@ -942,8 +974,18 @@ def run_init_with_retry(root: Path, env: dict[str, str], attempts: int = 3) -> s
 def run_plan_with_retry(root: Path, env: dict[str, str], attempts: int = 2) -> subprocess.CompletedProcess[str]:
     plan: subprocess.CompletedProcess[str] | None = None
     for _ in range(attempts):
+        (root / "plan.tfplan").unlink(missing_ok=True)
         plan = run(
-            ["terraform", "plan", "-refresh=false", "-lock=false", "-input=false", "-no-color", "-detailed-exitcode"],
+            [
+                "terraform",
+                "plan",
+                "-refresh=false",
+                "-lock=false",
+                "-input=false",
+                "-no-color",
+                "-detailed-exitcode",
+                "-out=plan.tfplan",
+            ],
             cwd=root,
             env=env,
         )
@@ -951,6 +993,44 @@ def run_plan_with_retry(root: Path, env: dict[str, str], attempts: int = 2) -> s
             return plan
     assert plan is not None
     return plan
+
+
+def planned_resources(module: dict[str, object]) -> dict[str, dict[str, object]]:
+    resources: dict[str, dict[str, object]] = {}
+    for resource in module.get("resources", []):
+        if isinstance(resource, dict) and isinstance(resource.get("address"), str):
+            values = resource.get("values")
+            resources[resource["address"]] = values if isinstance(values, dict) else {}
+    for child in module.get("child_modules", []):
+        if isinstance(child, dict):
+            resources.update(planned_resources(child))
+    return resources
+
+
+def assert_planned_values(root: Path, env: dict[str, str], scenario: Scenario) -> str | None:
+    if not scenario.expect_resource_values:
+        return None
+    shown = run(["terraform", "show", "-json", "plan.tfplan"], cwd=root, env=env)
+    if shown.returncode != 0:
+        return f"terraform show failed\n{excerpt(shown.stdout)}"
+    try:
+        plan = json.loads(shown.stdout)
+        root_module = plan["planned_values"]["root_module"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        return f"invalid plan JSON: {exc}"
+    resources = planned_resources(root_module)
+    for address, expected_values in scenario.expect_resource_values:
+        if address not in resources:
+            return f"planned resource {address!r} not found; available matches: {[key for key in resources if 'hcloud_server.server' in key]}"
+        actual_values = resources[address]
+        mismatches = {
+            key: {"expected": expected, "actual": actual_values.get(key)}
+            for key, expected in expected_values.items()
+            if actual_values.get(key) != expected
+        }
+        if mismatches:
+            return f"planned values for {address} did not match: {mismatches}"
+    return None
 
 
 def excerpt(output: str, limit: int = 6000) -> str:
@@ -1020,6 +1100,12 @@ def main() -> int:
             if missing:
                 failures.append(f"{scenario.name}: missing expected output {missing}\n{excerpt(output)}")
                 print(f"FAIL {scenario.name}: missing expected output", flush=True)
+                continue
+
+            plan_value_error = assert_planned_values(root, env, scenario)
+            if plan_value_error:
+                failures.append(f"{scenario.name}: {plan_value_error}")
+                print(f"FAIL {scenario.name}: planned values did not match", flush=True)
                 continue
 
             print(f"PASS {scenario.name}", flush=True)

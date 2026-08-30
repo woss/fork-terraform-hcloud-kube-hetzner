@@ -106,6 +106,8 @@ grep -Fq "qemu-img convert -p -f qcow2 -O host_device '$arm_path' /dev/sda" <<< 
 for required_cleanup_text in \
   "transactional-update --continue shell" \
   "rm -f /etc/ssh/ssh_host_*" \
+  'rm -f /root/.ssh/authorized_keys /root/.ssh/authorized_keys.kube-hetzner' \
+  'SSH authorized keys remain in the persistent root subvolume' \
   "install -m 0644 /dev/null /etc/NetworkManager/NetworkManager.conf" \
   "timezone='Europe/Madrid'" \
   'ln -snf "$zoneinfo" /etc/localtime' \
@@ -117,6 +119,15 @@ for required_cleanup_text in \
   grep -Fq "$required_cleanup_text" <<< "$finalize_script" \
     || fail "rendered transactional finalizer is missing: $required_cleanup_text"
 done
+
+if ! awk '
+  /transactional-update --continue shell/ { inside = 1; next }
+  inside && /^[[:space:]]*EOF$/ { inside = 0; next }
+  !inside && /rm -f \/root\/[.]ssh\/authorized_keys/ { found = 1 }
+  END { exit(found ? 0 : 1) }
+' <<< "$finalize_script"; then
+  fail 'persistent /root authorized-key cleanup must run outside the transactional shell'
+fi
 
 for required_booted_selinux_check in \
   'rpm -q --queryformat' \

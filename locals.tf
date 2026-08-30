@@ -60,8 +60,9 @@ locals {
   tailscale_enable_ssh                   = var.tailscale_node_transport.ssh.enable_tailscale_ssh ? "true" : "false"
   tailscale_advertise_additional_routes  = var.tailscale_node_transport.routing.advertise_additional_routes
 
-  kubernetes_distribution        = var.kubernetes_distribution
-  secrets_encryption_config_file = local.kubernetes_distribution == "rke2" ? "/etc/rancher/rke2/encryption-config.yaml" : "/etc/rancher/k3s/encryption-config.yaml"
+  kubernetes_distribution         = var.kubernetes_distribution
+  secrets_encryption_config_file  = local.kubernetes_distribution == "rke2" ? "/etc/rancher/rke2/encryption-config.yaml" : "/etc/rancher/k3s/encryption-config.yaml"
+  secrets_encryption_staging_file = "/root/.kube-hetzner-encryption-config.yaml"
   secrets_encryption_config = var.enable_secrets_encryption ? yamlencode({
     apiVersion = "apiserver.config.k8s.io/v1"
     kind       = "EncryptionConfiguration"
@@ -82,6 +83,76 @@ locals {
       ]
     }]
   }) : ""
+  secrets_encryption_install_script = <<-EOT
+set -eu
+KH_ENCRYPTION_STAGE="${local.secrets_encryption_staging_file}"
+KH_ENCRYPTION_DEST="${local.secrets_encryption_config_file}"
+KH_ENCRYPTION_REQUESTED="${var.enable_secrets_encryption}"
+KH_ENCRYPTION_INSTALLED=0
+KH_ENCRYPTION_TMP=""
+cleanup_kh_encryption_stage() {
+  rm -f "$KH_ENCRYPTION_STAGE"
+  if [ -n "$KH_ENCRYPTION_TMP" ]; then
+    rm -f "$KH_ENCRYPTION_TMP"
+  fi
+}
+trap cleanup_kh_encryption_stage EXIT
+trap 'cleanup_kh_encryption_stage; exit 129' HUP
+trap 'cleanup_kh_encryption_stage; exit 130' INT
+trap 'cleanup_kh_encryption_stage; exit 143' TERM
+
+relabel_kh_encryption_config() {
+  CONFIG_PATH="$1"
+  if command -v restorecon >/dev/null 2>&1; then
+    restorecon -F "$CONFIG_PATH"
+    return
+  fi
+  if { [ -r /sys/fs/selinux/enforce ] && [ "$(cat /sys/fs/selinux/enforce)" = "1" ]; } || \
+    { command -v getenforce >/dev/null 2>&1 && [ "$(getenforce)" != "Disabled" ]; }; then
+    echo "ERROR: SELinux is active but restorecon is unavailable; cannot install $CONFIG_PATH safely." >&2
+    exit 1
+  fi
+  echo "Info: SELinux is disabled and restorecon is unavailable; skipping relabel for $CONFIG_PATH."
+}
+
+mkdir -p "$(dirname "$KH_ENCRYPTION_DEST")"
+if [ -s "$KH_ENCRYPTION_STAGE" ]; then
+  if [ "$KH_ENCRYPTION_REQUESTED" != "true" ]; then
+    echo "ERROR: staged Kubernetes secrets-encryption key material exists while encryption is disabled." >&2
+    exit 1
+  fi
+  if [ -e "$KH_ENCRYPTION_DEST" ] && ! cmp -s "$KH_ENCRYPTION_STAGE" "$KH_ENCRYPTION_DEST"; then
+    echo "ERROR: automatic Kubernetes secrets-encryption key rotation is not supported. Restore the previous Terraform state/key or perform a staged multi-key Kubernetes rotation before applying." >&2
+    exit 1
+  fi
+  if [ ! -e "$KH_ENCRYPTION_DEST" ]; then
+    KH_ENCRYPTION_TMP="$KH_ENCRYPTION_DEST.kube-hetzner-new"
+    install -o root -g root -m 0600 "$KH_ENCRYPTION_STAGE" "$KH_ENCRYPTION_TMP"
+    relabel_kh_encryption_config "$KH_ENCRYPTION_TMP"
+    mv -f "$KH_ENCRYPTION_TMP" "$KH_ENCRYPTION_DEST"
+    KH_ENCRYPTION_TMP=""
+    relabel_kh_encryption_config "$KH_ENCRYPTION_DEST"
+    KH_ENCRYPTION_INSTALLED=1
+  else
+    chown root:root "$KH_ENCRYPTION_DEST"
+    chmod 0600 "$KH_ENCRYPTION_DEST"
+    relabel_kh_encryption_config "$KH_ENCRYPTION_DEST"
+  fi
+elif [ "$KH_ENCRYPTION_REQUESTED" = "true" ]; then
+  if [ ! -e "$KH_ENCRYPTION_DEST" ]; then
+    echo "ERROR: Kubernetes secrets encryption is configured, but $KH_ENCRYPTION_DEST and its staged replacement are both missing." >&2
+    exit 1
+  fi
+  chown root:root "$KH_ENCRYPTION_DEST"
+  chmod 0600 "$KH_ENCRYPTION_DEST"
+  relabel_kh_encryption_config "$KH_ENCRYPTION_DEST"
+elif [ -e "$KH_ENCRYPTION_DEST" ]; then
+  echo "ERROR: disabling Kubernetes secrets encryption in place can make existing Secrets unreadable. Keep the existing Terraform state/key or migrate workloads to a new cluster with a new key." >&2
+  exit 1
+fi
+cleanup_kh_encryption_stage
+trap - 0 1 2 15
+EOT
 
   # k3s endpoint used for agent registration, respects control_plane_endpoint override
   multinetwork_overlay_enabled        = var.multinetwork_mode == "cilium_public_overlay"
@@ -520,8 +591,8 @@ locals {
     "# Ensure persistent private-network default route (Hetzner DHCP change Aug 11, 2025)",
     "set +e  # Allow idempotent network adjustments",
     "METRIC=30000",
-    "if [ -z \"$KH_NETWORK_IPV4_CIDR\" ]; then KH_NETWORK_IPV4_CIDR=\"${var.network_ipv4_cidr}\"; fi",
-    "if [ -z \"$KH_NETWORK_GW_IPV4\" ]; then KH_NETWORK_GW_IPV4=\"${local.network_gw_ipv4}\"; fi",
+    "if [ -z \"$${KH_NETWORK_IPV4_CIDR:-}\" ]; then KH_NETWORK_IPV4_CIDR=\"${var.network_ipv4_cidr}\"; fi",
+    "if [ -z \"$${KH_NETWORK_GW_IPV4:-}\" ]; then KH_NETWORK_GW_IPV4=\"${local.network_gw_ipv4}\"; fi",
     "",
     "# Determine the private interface dynamically (no hardcoded eth1)",
     "PRIV_IF=$(ip -4 route show \"$KH_NETWORK_IPV4_CIDR\" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i==\"dev\"){print $(i+1); exit}}' | head -n 1)",
@@ -582,6 +653,76 @@ locals {
     "set -e"
   ])
 
+  metadata_route_repair_script = <<-EOT
+set -eu
+METADATA_IP=169.254.169.254
+PUBLIC_GW=172.31.1.1
+METADATA_METRIC=100
+DESIRED_ROUTE="$METADATA_IP/32 $PUBLIC_GW $METADATA_METRIC"
+
+# The public gateway is valid only when it is directly connected. A route that
+# contains "via" is an indirect private/default path and must never be treated
+# as proof that this node has public IPv4 connectivity.
+PUBLIC_ROUTE=$(ip -4 route get "$PUBLIC_GW" 2>/dev/null || true)
+case "$PUBLIC_ROUTE" in
+  ""|*" via "*)
+    echo "Info: no directly connected public IPv4 gateway; leaving $METADATA_IP routing unchanged."
+    exit 0
+    ;;
+esac
+
+PUB_IF=$(printf '%s\n' "$PUBLIC_ROUTE" | awk '{for (i = 1; i <= NF; i++) if ($i == "dev") {print $(i + 1); exit}}')
+if [ -z "$PUB_IF" ] || ! ip -o -4 addr show dev "$PUB_IF" scope global | grep -q ' inet '; then
+  echo "Info: the directly connected gateway has no public IPv4 interface; leaving $METADATA_IP routing unchanged."
+  exit 0
+fi
+
+if ! systemctl is-active --quiet NetworkManager; then
+  echo "ERROR: NetworkManager is not active; cannot persist the Hetzner metadata route." >&2
+  exit 1
+fi
+
+PUB_UUID=$(nmcli -g GENERAL.CON-UUID device show "$PUB_IF" 2>/dev/null | head -n 1)
+if [ -z "$PUB_UUID" ] || [ "$PUB_UUID" = "--" ]; then
+  echo "ERROR: no active NetworkManager connection UUID found for $PUB_IF." >&2
+  exit 1
+fi
+
+# Remove every persisted route for this destination before adding the exact
+# desired tuple. This converges stale gateway/metric/table variants and cannot
+# accumulate duplicates across repeated cloud-init or manual repair runs.
+PERSISTED_ROUTES=$(nmcli -g ipv4.routes connection show "$PUB_UUID" 2>/dev/null || true)
+printf '%s\n' "$PERSISTED_ROUTES" | tr ',' '\n' | while IFS= read -r ROUTE; do
+  case "$ROUTE" in
+    "$METADATA_IP/32"*)
+      nmcli connection modify "$PUB_UUID" -ipv4.routes "$ROUTE"
+      ;;
+  esac
+done
+nmcli connection modify "$PUB_UUID" +ipv4.routes "$DESIRED_ROUTE"
+nmcli device reapply "$PUB_IF"
+
+ip -4 route replace "$METADATA_IP/32" via "$PUBLIC_GW" dev "$PUB_IF" onlink metric "$METADATA_METRIC"
+SELECTED_ROUTE=$(ip -4 route get "$METADATA_IP" 2>/dev/null || true)
+case "$SELECTED_ROUTE" in
+  "$METADATA_IP via $PUBLIC_GW dev $PUB_IF "*) ;;
+  *)
+    echo "ERROR: metadata route postcondition failed: $SELECTED_ROUTE" >&2
+    exit 1
+    ;;
+esac
+
+for ATTEMPT in 1 2 3 4 5 6 7 8 9 10; do
+  if curl -fsS --interface "$PUB_IF" --connect-timeout 2 --max-time 5 \
+    "http://$METADATA_IP/hetzner/v1/metadata/instance-id" >/dev/null; then
+    exit 0
+  fi
+  sleep 2
+done
+echo "ERROR: Hetzner metadata remained unreachable through $PUB_IF after route repair." >&2
+exit 1
+EOT
+
   common_pre_install_k3s_commands = concat(
     [
       "set -ex",
@@ -589,10 +730,10 @@ locals {
       "/etc/cloud/rename_interface.sh",
       # prepare the k3s config directory
       "mkdir -p /etc/rancher/k3s",
+      local.secrets_encryption_install_script,
       # move the config file into place and adjust permissions
       "[ -f /tmp/config.yaml ] && mv /tmp/config.yaml /etc/rancher/k3s/config.yaml",
       "chmod 0600 /etc/rancher/k3s/config.yaml",
-      "[ -s /tmp/encryption-config.yaml ] && mv /tmp/encryption-config.yaml /etc/rancher/k3s/encryption-config.yaml && chmod 0600 /etc/rancher/k3s/encryption-config.yaml",
       # if the server has already been initialized just stop here
       "[ -e /etc/rancher/k3s/k3s.yaml ] && exit 0",
       local.install_additional_kubernetes_environment,
@@ -638,10 +779,10 @@ locals {
       "/etc/cloud/rename_interface.sh",
       # prepare the rke2 config directory
       "mkdir -p /etc/rancher/rke2",
+      local.secrets_encryption_install_script,
       # move the config file into place and adjust permissions
       "[ -f /tmp/config.yaml ] && mv /tmp/config.yaml /etc/rancher/rke2/config.yaml",
       "chmod 0600 /etc/rancher/rke2/config.yaml",
-      "[ -s /tmp/encryption-config.yaml ] && mv /tmp/encryption-config.yaml /etc/rancher/rke2/encryption-config.yaml && chmod 0600 /etc/rancher/rke2/encryption-config.yaml && restorecon -F /etc/rancher/rke2/encryption-config.yaml",
       # if the server has already been initialized just stop here
       "[ -e /etc/rancher/rke2/rke2.yaml ] && exit 0",
       local.install_additional_kubernetes_environment,
@@ -730,7 +871,8 @@ EOT
           patch = file("${path.module}/kustomize/system-upgrade-controller.yaml")
         }
       ] : [],
-      var.enable_kured ? [{ path = "kured.yaml" }] : []
+      var.enable_kured ? [{ path = "kured.yaml" }] : [],
+      local.kubernetes_distribution == "k3s" && var.cni_plugin == "calico" ? [{ path = "calico.yaml" }] : []
     )
   })
 
@@ -1521,8 +1663,8 @@ EOT
         path        = "/etc/kube-hetzner/node-annotations.b64"
         owner       = "root:root"
         permissions = "0600"
-        encoding    = "base64"
-        content = base64encode(format("%s\n", join("\n", [
+        encoding    = "gzip+base64"
+        content = base64gzip(format("%s\n", join("\n", [
           for key in sort(keys(annotations)) : "${base64encode(key)} ${base64encode(annotations[key])}"
         ])))
       },
@@ -2690,7 +2832,7 @@ spec:
 
   EOT
 
-  desired_cni_values  = var.cni_plugin == "cilium" ? local.cilium_values : local.calico_values
+  desired_cni_values  = var.cni_plugin == "cilium" ? local.cilium_values : (local.kubernetes_distribution == "k3s" ? local.calico_values : "")
   desired_cni_version = var.cni_plugin == "cilium" ? var.cilium_version : local.calico_version
   # RKE2 supports built-in CNI selections. We only inject a custom manifest for cilium.
   rke2_cni = (
@@ -3233,11 +3375,19 @@ fi
 EOF
 
 k3s_config_update_script = <<EOF
-DATE=`date +%Y-%m-%d_%H-%M-%S`
+set -eu
+DATE=$(date +%Y-%m-%d_%H-%M-%S)
+CONFIG_SOURCE=/tmp/config.yaml
+CONFIG_DEST=/etc/rancher/k3s/config.yaml
+CONFIG_BACKUP="/tmp/k3s-config_$DATE.yaml"
+HAS_CONFIG_BACKUP=false
+CONFIG_CHANGED=false
 mkdir -p /etc/rancher/k3s
 
+${local.secrets_encryption_install_script}
+
 restart_or_signal_update() {
-  local SERVICE_NAME="$1"
+  SERVICE_NAME="$1"
   if ${var.kubernetes_config_updates_use_kured_sentinel}; then
     SENTINEL="${local.kured_reboot_sentinel}"
     mkdir -p "$(dirname "$SENTINEL")"
@@ -3248,27 +3398,57 @@ restart_or_signal_update() {
   systemctl restart "$SERVICE_NAME"
 }
 
-if cmp -s /tmp/config.yaml /etc/rancher/k3s/config.yaml; then
+rollback_k3s_config() {
+  if [ "$HAS_CONFIG_BACKUP" = true ]; then
+    install -o root -g root -m 0600 "$CONFIG_BACKUP" "$CONFIG_DEST"
+  else
+    rm -f "$CONFIG_DEST"
+  fi
+  if [ "$KH_ENCRYPTION_INSTALLED" -eq 1 ]; then
+    rm -f "$KH_ENCRYPTION_DEST"
+  fi
+}
+
+if cmp -s "$CONFIG_SOURCE" "$CONFIG_DEST"; then
   echo "No update required to the config.yaml file"
 else
-  if [ -f "/etc/rancher/k3s/config.yaml" ]; then
-    echo "Backing up /etc/rancher/k3s/config.yaml to /tmp/config_$DATE.yaml"
-    cp /etc/rancher/k3s/config.yaml /tmp/config_$DATE.yaml
+  if [ -f "$CONFIG_DEST" ]; then
+    cp -p "$CONFIG_DEST" "$CONFIG_BACKUP"
+    HAS_CONFIG_BACKUP=true
   fi
-  echo "Updated config.yaml detected, restart of k3s service required"
-  cp /tmp/config.yaml /etc/rancher/k3s/config.yaml
-  if [ -s /tmp/encryption-config.yaml ]; then
-    cp /tmp/encryption-config.yaml /etc/rancher/k3s/encryption-config.yaml
-    chmod 0600 /etc/rancher/k3s/encryption-config.yaml
-  fi
-  if systemctl is-active --quiet k3s; then
-    restart_or_signal_update k3s || (echo "Error: Failed to restart k3s. Restoring /etc/rancher/k3s/config.yaml from backup" && cp /tmp/config_$DATE.yaml /etc/rancher/k3s/config.yaml && restart_or_signal_update k3s)
-  elif systemctl is-active --quiet k3s-agent; then
-    restart_or_signal_update k3s-agent || (echo "Error: Failed to restart k3s-agent. Restoring /etc/rancher/k3s/config.yaml from backup" && cp /tmp/config_$DATE.yaml /etc/rancher/k3s/config.yaml && restart_or_signal_update k3s-agent)
+  install -o root -g root -m 0600 "$CONFIG_SOURCE" "$CONFIG_DEST"
+  CONFIG_CHANGED=true
+fi
+
+if [ "$KH_ENCRYPTION_INSTALLED" -eq 1 ]; then
+  CONFIG_CHANGED=true
+fi
+
+if [ "$CONFIG_CHANGED" = false ]; then
+  echo "No k3s configuration update required"
+else
+  if systemctl is-active --quiet k3s || systemctl cat k3s >/dev/null 2>&1; then
+    SERVICE_NAME=k3s
+  elif systemctl is-active --quiet k3s-agent || systemctl cat k3s-agent >/dev/null 2>&1; then
+    SERVICE_NAME=k3s-agent
+  elif ! command -v k3s >/dev/null 2>&1 && [ ! -x /usr/local/bin/k3s ]; then
+    rm -f "$CONFIG_BACKUP"
+    echo "Staged k3s configuration for initial installation"
+    exit 0
   else
-    echo "No active k3s or k3s-agent service found"
+    echo "ERROR: k3s is installed, but no k3s service unit is available after installing configuration" >&2
+    rollback_k3s_config
+    exit 1
   fi
-  echo "k3s service or k3s-agent service (re)started successfully"
+
+  if ! restart_or_signal_update "$SERVICE_NAME"; then
+    echo "ERROR: failed to restart $SERVICE_NAME; restoring the previous configuration" >&2
+    rollback_k3s_config
+    restart_or_signal_update "$SERVICE_NAME" || true
+    exit 1
+  fi
+  rm -f "$CONFIG_BACKUP"
+  echo "$SERVICE_NAME configuration update completed successfully"
 fi
 EOF
 
@@ -3380,11 +3560,19 @@ fi
 EOF
 
 rke2_config_update_script = <<EOF
-DATE=`date +%Y-%m-%d_%H-%M-%S`
+set -eu
+DATE=$(date +%Y-%m-%d_%H-%M-%S)
+CONFIG_SOURCE=/tmp/config.yaml
+CONFIG_DEST=/etc/rancher/rke2/config.yaml
+CONFIG_BACKUP="/tmp/rke2-config_$DATE.yaml"
+HAS_CONFIG_BACKUP=false
+CONFIG_CHANGED=false
 mkdir -p /etc/rancher/rke2
 
+${local.secrets_encryption_install_script}
+
 restart_or_signal_update() {
-  local SERVICE_NAME="$1"
+  SERVICE_NAME="$1"
   if ${var.kubernetes_config_updates_use_kured_sentinel}; then
     SENTINEL="${local.kured_reboot_sentinel}"
     mkdir -p "$(dirname "$SENTINEL")"
@@ -3395,30 +3583,57 @@ restart_or_signal_update() {
   systemctl restart "$SERVICE_NAME"
 }
 
-if cmp -s /tmp/config.yaml /etc/rancher/rke2/config.yaml; then
+rollback_rke2_config() {
+  if [ "$HAS_CONFIG_BACKUP" = true ]; then
+    install -o root -g root -m 0600 "$CONFIG_BACKUP" "$CONFIG_DEST"
+  else
+    rm -f "$CONFIG_DEST"
+  fi
+  if [ "$KH_ENCRYPTION_INSTALLED" -eq 1 ]; then
+    rm -f "$KH_ENCRYPTION_DEST"
+  fi
+}
+
+if cmp -s "$CONFIG_SOURCE" "$CONFIG_DEST"; then
   echo "No update required to the config.yaml file"
 else
-  if [ -f "/etc/rancher/rke2/config.yaml" ]; then
-    echo "Backing up /etc/rancher/rke2/config.yaml to /tmp/config_$DATE.yaml"
-    cp /etc/rancher/rke2/config.yaml /tmp/config_$DATE.yaml
+  if [ -f "$CONFIG_DEST" ]; then
+    cp -p "$CONFIG_DEST" "$CONFIG_BACKUP"
+    HAS_CONFIG_BACKUP=true
   fi
-  echo "Updated config.yaml detected, restart of rke2-server service required"
-  cp /tmp/config.yaml /etc/rancher/rke2/config.yaml
-  if [ -s /tmp/encryption-config.yaml ]; then
-    cp /tmp/encryption-config.yaml /etc/rancher/rke2/encryption-config.yaml
-    chmod 0600 /etc/rancher/rke2/encryption-config.yaml
-    if command -v restorecon >/dev/null 2>&1; then
-      restorecon -F /etc/rancher/rke2/encryption-config.yaml
-    fi
-  fi
-  if systemctl is-active --quiet rke2-server; then
-    restart_or_signal_update rke2-server || (echo "Error: Failed to restart rke2-server. Restoring /etc/rancher/rke2/config.yaml from backup" && cp /tmp/config_$DATE.yaml /etc/rancher/rke2/config.yaml && restart_or_signal_update rke2-server)
-  elif systemctl is-active --quiet rke2-agent; then
-    restart_or_signal_update rke2-agent || (echo "Error: Failed to restart rke2-agent. Restoring /etc/rancher/rke2/config.yaml from backup" && cp /tmp/config_$DATE.yaml /etc/rancher/rke2/config.yaml && restart_or_signal_update rke2-agent)
+  install -o root -g root -m 0600 "$CONFIG_SOURCE" "$CONFIG_DEST"
+  CONFIG_CHANGED=true
+fi
+
+if [ "$KH_ENCRYPTION_INSTALLED" -eq 1 ]; then
+  CONFIG_CHANGED=true
+fi
+
+if [ "$CONFIG_CHANGED" = false ]; then
+  echo "No RKE2 configuration update required"
+else
+  if systemctl is-active --quiet rke2-server || systemctl cat rke2-server >/dev/null 2>&1; then
+    SERVICE_NAME=rke2-server
+  elif systemctl is-active --quiet rke2-agent || systemctl cat rke2-agent >/dev/null 2>&1; then
+    SERVICE_NAME=rke2-agent
+  elif ! command -v rke2 >/dev/null 2>&1 && [ ! -x /usr/local/bin/rke2 ] && [ ! -x /var/lib/rancher/rke2/bin/rke2 ]; then
+    rm -f "$CONFIG_BACKUP"
+    echo "Staged RKE2 configuration for initial installation"
+    exit 0
   else
-    echo "No active rke2-server or rke2-agent service found"
+    echo "ERROR: RKE2 is installed, but no RKE2 service unit is available after installing configuration" >&2
+    rollback_rke2_config
+    exit 1
   fi
-  echo "rke2-server service or rke2-agent service (re)started successfully"
+
+  if ! restart_or_signal_update "$SERVICE_NAME"; then
+    echo "ERROR: failed to restart $SERVICE_NAME; restoring the previous configuration" >&2
+    rollback_rke2_config
+    restart_or_signal_update "$SERVICE_NAME" || true
+    exit 1
+  fi
+  rm -f "$CONFIG_BACKUP"
+  echo "$SERVICE_NAME configuration update completed successfully"
 fi
 EOF
 
@@ -3451,6 +3666,21 @@ k8s_config_update_script                = local.kubernetes_distribution == "k3s"
 k8s_authentication_config_update_script = local.kubernetes_distribution == "k3s" ? local.k3s_authentication_config_update_script : local.rke2_authentication_config_update_script
 
 cloudinit_write_files_common = <<EOT
+# Reconcile by SSH key identity during first boot. Hetzner image snapshots can
+# retain a matching key with restrictive options, which cloud-init otherwise
+# treats as a duplicate and leaves in place.
+- path: /etc/kube-hetzner/managed-authorized-keys
+  content: ${base64encode(format("%s\n", join("\n", local.ssh_authorized_keys)))}
+  encoding: base64
+  owner: root:root
+  permissions: "0600"
+
+- path: /usr/local/sbin/kube-hetzner-reconcile-authorized-keys
+  content: ${base64gzip(file("${path.module}/scripts/reconcile-authorized-keys.sh"))}
+  encoding: gzip+base64
+  owner: root:root
+  permissions: "0755"
+
 # Keep NetworkManager away from CNI-owned interfaces. RKE2 explicitly
 # recommends this for Canal/Calico/Flannel interfaces, and it is harmless for
 # k3s clusters using the same interface families.
@@ -3634,30 +3864,36 @@ cloudinit_write_files_common = <<EOT
 
 # Create the kube_hetzner_selinux.te file, that allows in SELinux to not interfere with various needed services
 - path: /root/kube_hetzner_selinux.te
-  encoding: base64
-  content: ${base64encode(file("${path.module}/templates/kube-hetzner-selinux.te"))}
+  encoding: gzip+base64
+  content: ${base64gzip(file("${path.module}/templates/kube-hetzner-selinux.te"))}
 
 # Shared Leap Micro policy used by host and autoscaler templates
 - path: /root/k8s_custom_policies.te
-  encoding: base64
-  content: ${base64encode(file("${path.module}/templates/k8s-custom-policies.te"))}
+  encoding: gzip+base64
+  content: ${base64gzip(file("${path.module}/templates/k8s-custom-policies.te"))}
 
 # Create the distribution-specific registries file before Kubernetes starts.
 %{if local.registries_config_effective != ""}
-- content: ${base64encode(local.registries_config_effective)}
-  encoding: base64
+- content: ${base64gzip(local.registries_config_effective)}
+  encoding: gzip+base64
   path: ${local.registries_config_file}
 %{endif}
 
 # Create the distribution-specific kubelet config file if needed.
 %{if var.kubelet_config != ""}
-- content: ${base64encode(var.kubelet_config)}
-  encoding: base64
+- content: ${base64gzip(var.kubelet_config)}
+  encoding: gzip+base64
   path: ${local.kubelet_config_file}
 %{endif}
 EOT
 
 cloudinit_runcmd_common = <<EOT
+# Replace stale options on module-managed SSH identities before Terraform's
+# first connection, while preserving unrelated operator keys by default.
+- [/usr/local/sbin/kube-hetzner-reconcile-authorized-keys, /etc/kube-hetzner/managed-authorized-keys, /root/.ssh/authorized_keys, /root/.ssh/authorized_keys.kube-hetzner, '${var.ssh_authorized_keys_exclusive}']
+- [sed, '-i', 's/^root:!/root:/', '/etc/shadow']
+- [systemctl, 'restart', 'sshd']
+
 # ensure that /var uses full available disk size, thanks to btrfs this is easy
 - [btrfs, 'filesystem', 'resize', 'max', '/var']
 
@@ -3753,40 +3989,12 @@ cloudinit_runcmd_common = <<EOT
 - [setenforce, '0']
 %{endif}
 
-# Backup unlock for root SSH pubkey auth (belt-and-suspenders alongside the
-# systemd oneshot baked into the Packer image). cloud-init runcmd is
-# per-instance only, so the systemd unit is the real guard.
-- [sed, '-i', 's/^root:!/root:/', '/etc/shadow']
-- [systemctl, 'restart', 'sshd']
-
-# Keep the Hetzner metadata service reachable when the private-network DHCP
-# server advertises a classless static route (option 121 / RFC 3442) for
-# 169.254.169.254 via the private gateway. That path black-holes on affected
-# networks, and because the offered route is a /32 it beats the public default
-# route by longest-prefix-match at any metric - so ipv4.never-default and
-# ipv4.route-metric on the private connection cannot prevent it. Pin the same
-# /32 via the public gateway at a lower metric instead, persisted in the public
-# connection profile so it survives DHCP renewals and reboots (runcmd is
-# per-instance only). The DHCP route is deliberately left in place, since
-# deleting it would only bring it back on the next renewal. Nodes with no route
-# to the public gateway are left alone, because there metadata legitimately has
-# to traverse the private network.
+# Keep the Hetzner metadata service reachable when private-network DHCP
+# advertises a more-specific route that black-holes the public metadata path.
 - |
-  METADATA_IP=169.254.169.254
-  PUBLIC_GW=172.31.1.1
-  METADATA_METRIC=100
-  PUB_IF=$(ip -4 route get "$PUBLIC_GW" 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "dev") {print $(i + 1); exit}}')
-  if [ -z "$PUB_IF" ]; then
-    echo "Info: no route to $PUBLIC_GW; leaving $METADATA_IP routing unchanged."
-  else
-    if systemctl is-active --quiet NetworkManager; then
-      PUB_CONN=$(nmcli -g GENERAL.CONNECTION device show "$PUB_IF" 2>/dev/null | head -1)
-      if [ -n "$PUB_CONN" ] && ! nmcli -g ipv4.routes connection show "$PUB_CONN" 2>/dev/null | grep -q "$METADATA_IP/32"; then
-        nmcli connection modify "$PUB_CONN" +ipv4.routes "$METADATA_IP/32 $PUBLIC_GW $METADATA_METRIC" >/dev/null 2>&1 || echo "Warning: could not persist the $METADATA_IP route on $PUB_CONN." >&2
-      fi
-    fi
-    ip -4 route replace "$METADATA_IP/32" via "$PUBLIC_GW" dev "$PUB_IF" metric "$METADATA_METRIC" 2>/dev/null || echo "Warning: could not pin $METADATA_IP via $PUBLIC_GW dev $PUB_IF." >&2
-  fi
+  (
+${indent(2, "\n${chomp(local.metadata_route_repair_script)}")}
+  ) || exit 1
 
 EOT
 

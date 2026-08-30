@@ -20,6 +20,8 @@ for required_text in \
   'transactional-update --continue shell' \
   'rm -f /etc/ssh/ssh_host_*' \
   "find /etc/ssh -maxdepth 1 -name 'ssh_host_*'" \
+  'rm -f /root/.ssh/authorized_keys /root/.ssh/authorized_keys.kube-hetzner' \
+  'SSH authorized keys remain in the persistent root subvolume' \
   'install -m 0644 /dev/null /etc/NetworkManager/NetworkManager.conf' \
   "timezone='Europe/Madrid'" \
   "ln -snf \"\$zoneinfo\" /etc/localtime" \
@@ -35,6 +37,15 @@ if awk '
   END { exit(found ? 0 : 1) }
 ' <<< "$cleanup_script"; then
   fail "SSH host-key deletion escaped the transactional shell"
+fi
+
+if ! awk '
+  /transactional-update --continue shell/ { inside = 1; next }
+  inside && /^[[:space:]]*EOF$/ { inside = 0; next }
+  !inside && /rm -f \/root\/[.]ssh\/authorized_keys/ { found = 1 }
+  END { exit(found ? 0 : 1) }
+' <<< "$cleanup_script"; then
+  fail "persistent /root authorized-key cleanup must run outside the transactional shell"
 fi
 
 if grep -Fq 'timedatectl set-timezone' <<< "$cleanup_script"; then

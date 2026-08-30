@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import gzip
 import json
 import os
 import re
@@ -19,6 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 LOCALS_TF = REPO_ROOT / "locals.tf"
 AGENTS_TF = REPO_ROOT / "agents.tf"
 VARIABLES_TF = REPO_ROOT / "variables.tf"
+VALIDATION_CONTRACT_TF = REPO_ROOT / "validation-contract.tf"
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 RENDER_SSH_AUTHORIZED_KEY = (
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKubeHetznerRenderHarness render-comment"
@@ -210,6 +212,14 @@ def assert_agent_floating_ip_config_contract() -> None:
             "floating-IP agents must retain their node-external-ip setting",
         )
 
+    locals_source = normalize_hcl(LOCALS_TF.read_text(encoding="utf-8"))
+    for service in ("k3s-agent", "rke2-agent"):
+        if f"systemctlcat{service}>/dev/null2>&1" not in locals_source:
+            fail(
+                "agent floating IP config",
+                f"failed {service} units must be repaired instead of requiring an active service",
+            )
+
     print_pass(
         "agent floating IP config",
         "retains node-external-ip without the server-only Flannel flag",
@@ -318,12 +328,14 @@ def assert_agent_private_ipv4_contract(scratch: "TerraformScratch") -> None:
     )
 
 
-def assert_agent_extra_firewall_ids_contract() -> None:
+def assert_agent_extra_firewall_ids_contract(scratch: "TerraformScratch") -> None:
     """Keep scoped agent firewalls under the owning hcloud_server resource."""
 
     variables_source = normalize_hcl(VARIABLES_TF.read_text(encoding="utf-8"))
+    validation_contract_source = normalize_hcl(VALIDATION_CONTRACT_TF.read_text(encoding="utf-8"))
     locals_source = normalize_hcl(LOCALS_TF.read_text(encoding="utf-8"))
     agents_source = normalize_hcl(AGENTS_TF.read_text(encoding="utf-8"))
+    host_source = normalize_hcl((REPO_ROOT / "modules/host/main.tf").read_text(encoding="utf-8"))
 
     if variables_source.count("extra_firewall_ids=optional(list(number),[])") < 2:
         fail(
@@ -346,9 +358,279 @@ def assert_agent_extra_firewall_ids_contract() -> None:
     if required_agent_fragment not in agents_source:
         fail("agent extra firewall IDs", "agent host module does not merge global and scoped IDs")
 
+    required_validation_fragments = (
+        "length(distinct(var.extra_firewall_ids))<=4",
+        "length(distinct(concat(var.extra_firewall_ids,agent_nodepool.extra_firewall_ids,agent_node.extra_firewall_ids)))<=4",
+    )
+    validation_sources = variables_source + validation_contract_source
+    missing_validations = [fragment for fragment in required_validation_fragments if fragment not in validation_sources]
+    if missing_validations:
+        fail("agent extra firewall IDs", f"missing firewall limit validations: {missing_validations!r}")
+    if "length(local.effective_firewall_ids)<=5" not in host_source:
+        fail("agent extra firewall IDs", "host module does not defend the provider's five-firewall limit")
+
+    cases = (
+        ("count-backed", [101], [102, 103], [], True, [101, 102, 103, 900]),
+        ("map-backed", [101], [102], [103, 104], True, [101, 102, 103, 104, 900]),
+        ("duplicates", [101, 102], [102, 103], [101, 104], True, [101, 102, 103, 104, 900]),
+        ("private-only", [101], [102], [103], False, []),
+    )
+    for name, global_ids, pool_ids, node_ids, public, expected in cases:
+        expression = (
+            "jsonencode(tolist("
+            + (
+                "setunion(toset([900]),toset(distinct(concat("
+                f"{hcl_value(global_ids)},{hcl_value(pool_ids)},{hcl_value(node_ids)}))))"
+                if public
+                else "toset([])"
+            )
+            + "))"
+        )
+        actual = sorted(json.loads(json.loads(scratch.console(expression))))
+        if actual != expected:
+            fail("agent extra firewall IDs", f"{name} effective set was {actual!r}, expected {expected!r}")
+
     print_pass(
         "agent extra firewall IDs",
         "count and map nodepools merge scoped IDs into the owning hcloud_server",
+    )
+
+
+def assert_calico_kustomization_contract() -> None:
+    """Apply the Calico patch only to the upstream k3s manifest path."""
+
+    locals_source = normalize_hcl(LOCALS_TF.read_text(encoding="utf-8"))
+    variables_source = normalize_hcl(VARIABLES_TF.read_text(encoding="utf-8"))
+    required = (
+        'local.kubernetes_distribution=="k3s"&&var.cni_plugin=="calico"?[{path="calico.yaml"}]:[]',
+        'desired_cni_values=var.cni_plugin=="cilium"?local.cilium_values:(local.kubernetes_distribution=="k3s"?local.calico_values:"")',
+    )
+    missing = [fragment for fragment in required if fragment not in locals_source]
+    if missing:
+        fail("Calico kustomization", f"missing k3s-only patch contract: {missing!r}")
+    if "ThisinputisnotconsumedbyRKE2" not in variables_source:
+        fail("Calico kustomization", "calico_values does not document its k3s-only contract")
+    init_source = (REPO_ROOT / "init.tf").read_text(encoding="utf-8")
+    rke2_start = init_source.find('resource "terraform_data" "rke2_kustomization"')
+    if rke2_start == -1:
+        fail("Calico kustomization", "could not isolate the RKE2 kustomization resource")
+    rke2_source = init_source[rke2_start:]
+    if "local.calico_values" in rke2_source or "templates/calico.yaml.tpl" in rke2_source:
+        fail("Calico kustomization", "RKE2 still consumes the K3s-only calico_values input")
+    print_pass("Calico kustomization", "k3s applies calico.yaml while RKE2 keeps its bundled Calico path")
+
+
+def assert_autoscaler_network_env_contract() -> None:
+    """Unset static-node network variables must not abort autoscaler bootstrap."""
+
+    source = LOCALS_TF.read_text(encoding="utf-8")
+    for variable in ("KH_NETWORK_IPV4_CIDR", "KH_NETWORK_GW_IPV4"):
+        if f'$${{{variable}:-}}' not in source:
+            fail(
+                "autoscaler network environment",
+                f"{variable} is expanded unsafely under inherited set -u",
+            )
+    print_pass(
+        "autoscaler network environment",
+        "missing static-node network variables fall back safely under strict shell mode",
+    )
+
+
+def assert_autoscaler_user_data_limit_contract() -> None:
+    """Keep autoscaler cloud-init within Hetzner's hard server user-data limit."""
+
+    autoscaler_source = normalize_hcl(
+        (REPO_ROOT / "autoscaler-agents.tf").read_text(encoding="utf-8")
+    )
+    template_source = (
+        REPO_ROOT / "templates/autoscaler-cloudinit.yaml.tpl"
+    ).read_text(encoding="utf-8")
+    locals_source = LOCALS_TF.read_text(encoding="utf-8")
+
+    required_guard_fragments = (
+        "length(node_config.cloudInit)<=32768",
+        "HetznerCloud's32KiBuser_datalimit",
+    )
+    missing_guard = [
+        fragment for fragment in required_guard_fragments if fragment not in autoscaler_source
+    ]
+    if missing_guard:
+        fail("autoscaler user-data limit", f"missing plan guard fragments: {missing_guard!r}")
+
+    required_template_compression = (
+        "base64gzip(k3s_config)",
+        "base64gzip(install_k8s_agent_script)",
+    )
+    missing_template = [
+        fragment for fragment in required_template_compression if fragment not in template_source
+    ]
+    if missing_template:
+        fail("autoscaler user-data limit", f"missing template compression: {missing_template!r}")
+
+    required_shared_compression = (
+        'base64gzip(file("${path.module}/scripts/reconcile-authorized-keys.sh"))',
+        'base64gzip(file("${path.module}/templates/kube-hetzner-selinux.te"))',
+        'base64gzip(file("${path.module}/templates/k8s-custom-policies.te"))',
+    )
+    missing_shared = [
+        fragment for fragment in required_shared_compression if fragment not in locals_source
+    ]
+    if missing_shared:
+        fail("autoscaler user-data limit", f"missing shared payload compression: {missing_shared!r}")
+
+    print_pass(
+        "autoscaler user-data limit",
+        "large autoscaler payloads are compressed and final cloudInit is guarded at 32 KiB",
+    )
+
+
+def assert_secrets_encryption_lifecycle_contract() -> None:
+    """Keep encryption keys private and reject unsafe single-key rotation."""
+
+    label = "Secrets encryption lifecycle"
+    init_source = (REPO_ROOT / "init.tf").read_text(encoding="utf-8")
+    control_plane_source = (REPO_ROOT / "control_planes.tf").read_text(encoding="utf-8")
+    if "/tmp/encryption-config.yaml" in init_source + control_plane_source:
+        fail(label, "encryption key material is still staged in shared /tmp")
+    if (init_source + control_plane_source).count("local.secrets_encryption_staging_file") < 4:
+        fail(label, "all k3s/RKE2 upload paths must use the root-only staging location")
+
+    raw_script = extract_heredoc("secrets_encryption_install_script")
+    temp_dir = Path(tempfile.mkdtemp(prefix="kh-encryption-lifecycle-"))
+    try:
+        stage = temp_dir / "stage.yaml"
+        destination = temp_dir / "etc" / "encryption-config.yaml"
+        script_template = raw_script.replace(
+            "${local.secrets_encryption_staging_file}", str(stage)
+        ).replace("${local.secrets_encryption_config_file}", str(destination))
+        script_template = script_template.replace(
+            "/tmp/config.yaml", str(temp_dir / "config.yaml")
+        ).replace(
+            "/etc/rancher/k3s/config.yaml", str(temp_dir / "k3s-config.yaml")
+        ).replace(
+            "/etc/rancher/rke2/config.yaml", str(temp_dir / "rke2-config.yaml")
+        )
+        enabled_script = script_template.replace("${var.enable_secrets_encryption}", "true")
+        disabled_script = script_template.replace("${var.enable_secrets_encryption}", "false")
+        bash_syntax_check(label, enabled_script)
+        bash_syntax_check(label, disabled_script)
+
+        fake_bin = temp_dir / "bin"
+        fake_bin.mkdir()
+        restorecon = fake_bin / "restorecon"
+        restorecon.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        restorecon.chmod(0o755)
+        install = fake_bin / "install"
+        install.write_text(
+            """#!/bin/sh
+set -eu
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o|-g|-m) shift 2 ;;
+    *) break ;;
+  esac
+done
+/usr/bin/install -m 0600 "$1" "$2"
+""",
+            encoding="utf-8",
+        )
+        install.chmod(0o755)
+        chown = fake_bin / "chown"
+        chown.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        chown.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+
+        def run_script(*, encryption_requested: bool = True) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                ["bash"],
+                input=enabled_script if encryption_requested else disabled_script,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+            )
+
+        stage.write_text("key: first\n", encoding="utf-8")
+        created = run_script()
+        if created.returncode != 0 or destination.read_text(encoding="utf-8") != "key: first\n":
+            fail(label, f"fresh key installation failed: {created.stderr}")
+        if stage.exists() or (destination.stat().st_mode & 0o777) != 0o600:
+            fail(label, "fresh installation left staging material or incorrect permissions")
+
+        stage.write_text("key: first\n", encoding="utf-8")
+        same = run_script()
+        if same.returncode != 0 or stage.exists():
+            fail(label, f"idempotent key repair failed: {same.stderr}")
+
+        (temp_dir / "config.yaml").write_text(
+            f"kube-apiserver-arg:\n- encryption-provider-config={destination}\n",
+            encoding="utf-8",
+        )
+        repeated = run_script()
+        if repeated.returncode != 0 or destination.read_text(encoding="utf-8") != "key: first\n":
+            fail(label, f"enabled install without repeated staging failed: {repeated.stderr}")
+
+        stage.write_text("key: rotated\n", encoding="utf-8")
+        rotated = run_script()
+        if rotated.returncode == 0 or destination.read_text(encoding="utf-8") != "key: first\n" or stage.exists():
+            fail(label, "unsafe single-key rotation was not rejected without modifying the installed key")
+
+        (temp_dir / "k3s-config.yaml").write_text(
+            f"kube-apiserver-arg:\n- encryption-provider-config={destination}\n",
+            encoding="utf-8",
+        )
+        (temp_dir / "config.yaml").write_text("token: cluster-token\n", encoding="utf-8")
+        stage.write_text("", encoding="utf-8")
+        disabled = run_script(encryption_requested=False)
+        if disabled.returncode == 0 or destination.read_text(encoding="utf-8") != "key: first\n" or stage.exists():
+            fail(label, "the old installed config masked an unsafe in-place encryption disablement")
+
+        destination.unlink()
+        (temp_dir / "config.yaml").write_text(
+            f"kube-apiserver-arg:\n- encryption-provider-config={destination}\n",
+            encoding="utf-8",
+        )
+        missing = run_script()
+        if missing.returncode == 0:
+            fail(label, "an enabled configuration accepted a missing installed and staged key")
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    print_pass(label, "uses root-only staging, mode 0600, relabeling, cleanup, and fail-safe rotation guards")
+
+
+def assert_config_update_bootstrap_contract() -> None:
+    """Allow config staging before install without hiding broken installations."""
+
+    label = "Kubernetes config bootstrap ordering"
+    cases = (
+        (
+            "k3s_config_update_script",
+            "! command -v k3s",
+            "[ ! -x /usr/local/bin/k3s ]",
+            "Staged k3s configuration for initial installation",
+            "k3s is installed, but no k3s service unit is available",
+        ),
+        (
+            "rke2_config_update_script",
+            "! command -v rke2",
+            "[ ! -x /usr/local/bin/rke2 ]",
+            "Staged RKE2 configuration for initial installation",
+            "RKE2 is installed, but no RKE2 service unit is available",
+        ),
+    )
+    for heredoc, command_check, binary_check, staged_message, failure_message in cases:
+        script = extract_heredoc(heredoc)
+        for fragment in (command_check, binary_check, staged_message, failure_message):
+            if fragment not in script:
+                fail(label, f"{heredoc} is missing {fragment!r}")
+        if script.index(staged_message) > script.index(failure_message):
+            fail(label, f"{heredoc} does not check the fresh-install path before failing")
+
+    print_pass(
+        label,
+        "K3s and RKE2 stage fresh-node config before install but reject missing units after installation",
     )
 
 
@@ -464,6 +746,7 @@ def base_render_vars() -> dict[str, Any]:
         "cilium_hubble_enabled": True,
         "cilium_hubble_metrics_enabled": ["dns", "drop", "tcp", "flow", "icmp", "http"],
         "cilium_load_balancer_acceleration_mode": "best-effort",
+        "enable_selinux": True,
         "enable_hetzner_csi": True,
         "enable_kube_proxy": False,
         "haproxy_additional_proxy_protocol_ips": ["192.0.2.0/24"],
@@ -486,6 +769,8 @@ def base_render_vars() -> dict[str, Any]:
         "nat_router": {"extra_runcmd": ["echo render-harness"]},
         "rancher_bootstrap_password": "",
         "rancher_hostname": "",
+        "ssh_authorized_keys_exclusive": False,
+        "ssh_port": 22,
         "traefik_additional_options": ["--log.level=INFO"],
         "traefik_additional_ports": [],
         "traefik_additional_trusted_ips": ["192.0.2.0/24"],
@@ -534,6 +819,7 @@ def base_render_vars() -> dict[str, Any]:
         "multinetwork_overlay_enabled": False,
         "multinetwork_transport_ipv4_enabled": False,
         "multinetwork_transport_ipv6_enabled": False,
+        "metadata_route_repair_script": extract_heredoc("metadata_route_repair_script"),
         "post_install_readiness_wait_deployment_commands": "true",
         "post_install_readiness_wait_helm_job_commands_300": "true",
         "post_install_readiness_wait_helm_job_commands_900": "true",
@@ -1221,6 +1507,7 @@ def run_autoscaler_standard_node_ip_checks() -> None:
 def run_autoscaler_os_upgrade_timer_checks() -> None:
     label = "autoscaler OS upgrade timer cloud-init"
     timer_command = "systemctl enable --now transactional-update.timer"
+    health_checker_command = "systemctl unmask health-checker.service"
     agent_install = "/var/pre_install/install-k8s-agent.sh"
 
     def runcmd_for(upgrade_os: bool) -> list:
@@ -1249,7 +1536,11 @@ def run_autoscaler_os_upgrade_timer_checks() -> None:
     if timer_index < 0:
         fail(label, "autoscaler nodes never re-enable transactional-update.timer")
     if timer_index != len(enabled) - 1:
-        fail(label, "the timer must be re-enabled by the last runcmd entry")
+        fail(label, "the update policy must be restored by the last runcmd entry")
+
+    health_checker_index = index_of(enabled, health_checker_command)
+    if health_checker_index != timer_index:
+        fail(label, "health-checker and the update timer must be restored atomically")
 
     agent_index = index_of(enabled, agent_install)
     if agent_index < 0:
@@ -1257,13 +1548,159 @@ def run_autoscaler_os_upgrade_timer_checks() -> None:
     if timer_index < agent_index:
         fail(label, "re-enabling the timer must not race the Kubernetes bootstrap")
 
-    if index_of(runcmd_for(False), timer_command) >= 0:
+    disabled = runcmd_for(False)
+    if index_of(disabled, timer_command) >= 0:
         fail(label, "automatically_upgrade_os = false must not re-enable the timer")
+    if index_of(disabled, health_checker_command) != len(disabled) - 1:
+        fail(label, "health-checker must be restored even when automatic updates are disabled")
+
+    policy_script = enabled[-1]
+    if not isinstance(policy_script, str):
+        fail(label, "final update-policy runcmd entry is not a shell script")
+    bash_syntax_check(label, policy_script)
+    if "|| true" in policy_script:
+        fail(label, "update-policy restoration must not suppress systemd failures")
+
+    temp_dir = Path(tempfile.mkdtemp(prefix="kh-update-policy-"))
+    try:
+        systemctl = temp_dir / "systemctl"
+        systemctl.write_text(
+            """#!/bin/sh
+if [ "${KH_FAIL_TIMER:-0}" = "1" ] && [ "$*" = "enable --now transactional-update.timer" ]; then
+  exit 1
+fi
+exit 0
+""",
+            encoding="utf-8",
+        )
+        systemctl.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = f"{temp_dir}{os.pathsep}{env['PATH']}"
+        env["KH_FAIL_TIMER"] = "1"
+        failed = subprocess.run(
+            ["bash"],
+            input=policy_script,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+        )
+        if failed.returncode == 0:
+            fail(label, "a failed timer restore was silently accepted")
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
     print_pass(
         label,
-        "re-enables transactional-update.timer after the agent install, and only when automatically_upgrade_os is true",
+        "restores boot health checks after agent install and enforces the requested update policy",
     )
+
+
+def run_metadata_route_repair_checks() -> None:
+    label = "Hetzner metadata route repair"
+    script = extract_heredoc("metadata_route_repair_script")
+    bash_syntax_check(label, script)
+
+    temp_dir = Path(tempfile.mkdtemp(prefix="kh-metadata-route-"))
+    try:
+        fake_bin = temp_dir / "bin"
+        fake_bin.mkdir()
+        log_path = temp_dir / "mutations.log"
+        (fake_bin / "ip").write_text(
+            """#!/bin/sh
+set -eu
+case "$*" in
+  "-4 route get 172.31.1.1")
+    case "${KH_ROUTE_MODE:-direct}" in
+      direct|stale|nm-down) echo "172.31.1.1 dev eth0 src 203.0.113.10" ;;
+      indirect) echo "172.31.1.1 via 10.0.0.1 dev eth1 src 10.0.0.2" ;;
+      none) exit 2 ;;
+      no-public-address) echo "172.31.1.1 dev eth0" ;;
+    esac
+    ;;
+  "-o -4 addr show dev eth0 scope global")
+    [ "${KH_ROUTE_MODE:-direct}" = "no-public-address" ] || echo "2: eth0 inet 203.0.113.10/32 scope global eth0"
+    ;;
+  "-4 route replace 169.254.169.254/32 via 172.31.1.1 dev eth0 onlink metric 100")
+    printf 'ip-replace %s\n' "$*" >> "$KH_ROUTE_LOG"
+    ;;
+  "-4 route get 169.254.169.254")
+    echo "169.254.169.254 via 172.31.1.1 dev eth0 src 203.0.113.10"
+    ;;
+  *)
+    echo "unexpected ip invocation: $*" >&2
+    exit 1
+    ;;
+esac
+""",
+            encoding="utf-8",
+        )
+        (fake_bin / "systemctl").write_text(
+            """#!/bin/sh
+[ "${KH_ROUTE_MODE:-direct}" != "nm-down" ]
+""",
+            encoding="utf-8",
+        )
+        (fake_bin / "nmcli").write_text(
+            """#!/bin/sh
+set -eu
+case "$*" in
+  "-g GENERAL.CON-UUID device show eth0") echo "11111111-2222-3333-4444-555555555555" ;;
+  "-g ipv4.routes connection show 11111111-2222-3333-4444-555555555555")
+    [ "${KH_ROUTE_MODE:-direct}" = "stale" ] && echo "169.254.169.254/32 10.0.0.1 400,192.0.2.0/24 172.31.1.1 50" || true
+    ;;
+  connection\\ modify*|device\\ reapply*) printf 'nmcli %s\n' "$*" >> "$KH_ROUTE_LOG" ;;
+  *) echo "unexpected nmcli invocation: $*" >&2; exit 1 ;;
+esac
+""",
+            encoding="utf-8",
+        )
+        (fake_bin / "curl").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (fake_bin / "sleep").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        for path in fake_bin.iterdir():
+            path.chmod(0o755)
+
+        def simulate(mode: str) -> tuple[subprocess.CompletedProcess[str], str]:
+            log_path.write_text("", encoding="utf-8")
+            env = os.environ.copy()
+            env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+            env["KH_ROUTE_MODE"] = mode
+            env["KH_ROUTE_LOG"] = str(log_path)
+            result = subprocess.run(
+                ["bash"],
+                input=script,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+            )
+            return result, log_path.read_text(encoding="utf-8")
+
+        direct, direct_log = simulate("stale")
+        if direct.returncode != 0:
+            fail(label, f"direct public route simulation failed: {direct.stderr}")
+        required_mutations = (
+            "-ipv4.routes 169.254.169.254/32 10.0.0.1 400",
+            "+ipv4.routes 169.254.169.254/32 172.31.1.1 100",
+            "device reapply eth0",
+            "ip-replace",
+        )
+        missing = [item for item in required_mutations if item not in direct_log]
+        if missing:
+            fail(label, f"direct route did not converge stale state: missing {missing!r} in {direct_log!r}")
+
+        for mode in ("indirect", "none", "no-public-address"):
+            result, mutation_log = simulate(mode)
+            if result.returncode != 0 or mutation_log:
+                fail(label, f"{mode} path must skip safely; rc={result.returncode}, mutations={mutation_log!r}")
+
+        nm_down, _ = simulate("nm-down")
+        if nm_down.returncode == 0 or "NetworkManager is not active" not in nm_down.stderr:
+            fail(label, "supported public nodes must fail visibly when route persistence is unavailable")
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    print_pass(label, "repairs only directly connected public IPv4 nodes and converges stale profile state")
 
 
 def run_autoscaler_tailscale_bootstrap_scope_checks() -> None:
@@ -1362,6 +1799,47 @@ def run_cloudinit_checks(scratch: TerraformScratch) -> None:
             "authorized key list decodes to the expected single-line key",
         )
 
+        if template_path.name != "nat-router-cloudinit.yaml.tpl":
+            runcmd = document.get("runcmd")
+            if not isinstance(runcmd, list):
+                fail(str(template_path.relative_to(REPO_ROOT)), "runcmd is not a list")
+            metadata_scripts = [
+                item
+                for item in runcmd
+                if isinstance(item, str) and "METADATA_IP=169.254.169.254" in item
+            ]
+            if len(metadata_scripts) != 1:
+                fail(
+                    str(template_path.relative_to(REPO_ROOT)),
+                    f"expected one rendered metadata repair block, got {len(metadata_scripts)}",
+                )
+            metadata_script = metadata_scripts[0]
+            bash_syntax_check(
+                f"{template_path.relative_to(REPO_ROOT)} metadata repair",
+                metadata_script,
+            )
+            if not metadata_script.lstrip().startswith("(") or ") || exit 1" not in metadata_script:
+                fail(
+                    str(template_path.relative_to(REPO_ROOT)),
+                    "metadata repair must be scoped so internal exit commands cannot terminate cloud-init",
+                )
+            key_reconcile = [
+                item
+                for item in runcmd
+                if isinstance(item, list)
+                and item
+                and item[0] == "/usr/local/sbin/kube-hetzner-reconcile-authorized-keys"
+            ]
+            if len(key_reconcile) != 1:
+                fail(
+                    str(template_path.relative_to(REPO_ROOT)),
+                    "missing first-boot SSH key identity reconciliation",
+                )
+            print_pass(
+                str(template_path.relative_to(REPO_ROOT)),
+                "renders the real shared runcmd with scoped metadata repair and SSH key reconciliation",
+            )
+
 
 def node_annotation_write_files(scratch: TerraformScratch) -> list[dict[str, str]]:
     annotations = {
@@ -1377,8 +1855,8 @@ def node_annotation_write_files(scratch: TerraformScratch) -> list[dict[str, str
             "path": "/etc/kube-hetzner/node-annotations.b64",
             "owner": "root:root",
             "permissions": "0600",
-            "encoding": "base64",
-            "content": base64.b64encode(f"{payload}\n".encode()).decode(),
+            "encoding": "gzip+base64",
+            "content": base64.b64encode(gzip.compress(f"{payload}\n".encode())).decode(),
         },
         {
             "path": "/usr/local/bin/kh-annotate-node.sh",
@@ -1431,9 +1909,9 @@ def assert_node_annotation_payload(name: str, document: Any, rendered: str) -> N
             fail(name, f"missing annotation write_files entry {path}")
 
     payload_entry = by_path["/etc/kube-hetzner/node-annotations.b64"]
-    if payload_entry.get("encoding") != "base64":
-        fail(name, "annotation payload file is not base64-encoded")
-    payload = base64.b64decode(str(payload_entry["content"])).decode()
+    if payload_entry.get("encoding") != "gzip+base64":
+        fail(name, "annotation payload file is not gzip+base64-encoded")
+    payload = gzip.decompress(base64.b64decode(str(payload_entry["content"]))).decode()
     decoded = {}
     for line in payload.splitlines():
         key_b64, value_b64 = line.split(" ", 1)
@@ -1825,11 +2303,24 @@ def main() -> int:
 
     temp_dir = Path(tempfile.mkdtemp(prefix="kh-render-harness-"))
     try:
-        scratch = TerraformScratch(temp_dir, base_render_vars())
+        render_vars = base_render_vars()
+        bootstrap_scratch = TerraformScratch(temp_dir, render_vars)
+        render_vars["cloudinit_runcmd_common"] = bootstrap_scratch.render_string(
+            bootstrap_scratch.write_template(
+                "cloudinit_runcmd_common",
+                extract_heredoc("cloudinit_runcmd_common"),
+            )
+        )
+        scratch = TerraformScratch(temp_dir, render_vars)
         assert_addon_default_versions()
         assert_agent_floating_ip_config_contract()
         assert_agent_private_ipv4_contract(scratch)
-        assert_agent_extra_firewall_ids_contract()
+        assert_agent_extra_firewall_ids_contract(scratch)
+        assert_autoscaler_network_env_contract()
+        assert_autoscaler_user_data_limit_contract()
+        assert_calico_kustomization_contract()
+        assert_secrets_encryption_lifecycle_contract()
+        assert_config_update_bootstrap_contract()
         assert_opensuse_ssh_cloudinit_contract()
         assert_baked_selinux_package_contract()
         assert_kubernetes_artifact_architecture_contract()
@@ -1844,6 +2335,7 @@ def main() -> int:
         run_post_install_readiness_deployment_retry_simulation(post_install_readiness_script)
         run_post_install_readiness_deadline_simulation(post_install_readiness_script)
         run_cloudinit_checks(scratch)
+        run_metadata_route_repair_checks()
         run_node_annotation_cloudinit_checks(scratch)
         run_autoscaler_standard_node_ip_checks()
         run_autoscaler_tailscale_bootstrap_scope_checks()

@@ -68,6 +68,16 @@ resource "hcloud_server" "server" {
       user_data,
       image,
     ]
+
+    precondition {
+      condition     = length(local.effective_firewall_ids) <= 5
+      error_message = "Hetzner Cloud supports at most five firewalls per server."
+    }
+
+    precondition {
+      condition     = alltrue([for firewall_id in local.effective_firewall_ids : firewall_id > 0 && firewall_id == floor(firewall_id)])
+      error_message = "Firewall IDs must be positive integers."
+    }
   }
 
 }
@@ -185,6 +195,7 @@ resource "terraform_data" "ssh_authorized_keys" {
     ssh_public_key                = sha1(var.ssh_public_key)
     ssh_additional_keys           = sha1(join("\n", var.ssh_additional_public_keys))
     ssh_authorized_keys_exclusive = tostring(var.ssh_authorized_keys_exclusive)
+    reconciler                    = "identity-v1"
   }
 
   connection {
@@ -211,41 +222,22 @@ resource "terraform_data" "ssh_authorized_keys" {
     destination = "/tmp/authorized_keys"
   }
 
+  provisioner "file" {
+    source      = "${path.module}/../../scripts/reconcile-authorized-keys.sh"
+    destination = "/tmp/reconcile-authorized-keys.sh"
+  }
+
   provisioner "remote-exec" {
     inline = [
       <<-EOT
       set -eu
-
-      install -d -m 0700 /root/.ssh
-
-      authorized_keys="/root/.ssh/authorized_keys"
-      sidecar="/root/.ssh/authorized_keys.kube-hetzner"
-      current_keys="$(mktemp)"
-      preserved_keys="$(mktemp)"
-      reconciled_keys="$(mktemp)"
-      trap 'rm -f "$current_keys" "$preserved_keys" "$reconciled_keys" /tmp/authorized_keys' EXIT
-
-      awk 'NF > 0 && !seen[$0]++ { print }' /tmp/authorized_keys > "$current_keys"
-
-      if [ "${var.ssh_authorized_keys_exclusive}" = "true" ]; then
-        install -m 0600 "$current_keys" "$authorized_keys"
-      else
-        if [ -f "$authorized_keys" ]; then
-          if [ -f "$sidecar" ]; then
-            awk 'NR == FNR { previous[$0] = 1; next } NF > 0 && !previous[$0] { print }' "$sidecar" "$authorized_keys" > "$preserved_keys"
-          else
-            awk 'NF > 0 { print }' "$authorized_keys" > "$preserved_keys"
-          fi
-        else
-          : > "$preserved_keys"
-        fi
-
-        awk 'NF > 0 && !seen[$0]++ { print }' "$preserved_keys" "$current_keys" > "$reconciled_keys"
-        install -m 0600 "$reconciled_keys" "$authorized_keys"
-      fi
-
-      install -m 0600 "$current_keys" "$sidecar"
-      chown root:root /root/.ssh "$authorized_keys" "$sidecar"
+      trap 'rm -f /tmp/authorized_keys /tmp/reconcile-authorized-keys.sh' EXIT
+      install -m 0755 /tmp/reconcile-authorized-keys.sh /usr/local/sbin/kube-hetzner-reconcile-authorized-keys
+      /usr/local/sbin/kube-hetzner-reconcile-authorized-keys \
+        /tmp/authorized_keys \
+        /root/.ssh/authorized_keys \
+        /root/.ssh/authorized_keys.kube-hetzner \
+        ${var.ssh_authorized_keys_exclusive}
       EOT
       ,
     ]
@@ -501,8 +493,9 @@ moved {
 # Resource to toggle transactional-update.timer based on automatically_upgrade_os setting
 resource "terraform_data" "os_upgrade_toggle" {
   triggers_replace = {
-    os_upgrade_state = var.automatically_upgrade_os ? "enabled" : "disabled"
-    server_id        = hcloud_server.server.id
+    os_upgrade_state     = var.automatically_upgrade_os ? "enabled" : "disabled"
+    health_checker_state = "enabled-after-bootstrap-v1"
+    server_id            = hcloud_server.server.id
   }
 
   connection {
@@ -522,12 +515,24 @@ resource "terraform_data" "os_upgrade_toggle" {
   provisioner "remote-exec" {
     inline = [
       <<-EOT
+      set -eu
+      echo "Restoring transactional boot health checks after first-boot provisioning"
+      systemctl unmask health-checker.service
+      systemctl enable health-checker.service
+      systemctl is-enabled --quiet health-checker.service
+
       if [ "${var.automatically_upgrade_os}" = "true" ]; then
         echo "automatically_upgrade_os changed to true, enabling transactional-update.timer"
-        systemctl enable --now transactional-update.timer || true
+        systemctl enable --now transactional-update.timer
+        systemctl is-enabled --quiet transactional-update.timer
+        systemctl is-active --quiet transactional-update.timer
       else
         echo "automatically_upgrade_os changed to false, disabling transactional-update.timer"
-        systemctl disable --now transactional-update.timer || true
+        systemctl disable --now transactional-update.timer
+        if systemctl is-enabled --quiet transactional-update.timer || systemctl is-active --quiet transactional-update.timer; then
+          echo "ERROR: transactional-update.timer remained enabled or active" >&2
+          exit 1
+        fi
       fi
       EOT
     ]

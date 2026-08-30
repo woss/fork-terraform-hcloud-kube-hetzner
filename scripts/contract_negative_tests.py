@@ -73,6 +73,12 @@ CASES = [
         expected_substring="agent_nodepools annotations values must be single-line strings",
     ),
     Case(
+        name="too-many-agent-firewalls",
+        var_file=FIXTURE_DIR / "too-many-agent-firewalls.tfvars.fixture",
+        target="module.sut.terraform_data.validation_contract",
+        expected_substring="at most five Hetzner Firewalls",
+    ),
+    Case(
         name="rke2-overreserved",
         var_file=FIXTURE_DIR / "rke2-overreserved.tfvars.fixture",
         target="module.sut.terraform_data.validation_contract",

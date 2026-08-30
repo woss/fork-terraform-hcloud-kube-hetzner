@@ -66,13 +66,13 @@ ${cloudinit_write_files_common}
     WantedBy=sysinit.target
 %{ endif ~}
 
-- content: ${base64encode(k3s_config)}
-  encoding: base64
+- content: ${base64gzip(k3s_config)}
+  encoding: gzip+base64
   path: /tmp/config.yaml
 
 # Distro-specific agent installation script rendered by the module.
-- content: ${base64encode(install_k8s_agent_script)}
-  encoding: base64
+- content: ${base64gzip(install_k8s_agent_script)}
+  encoding: gzip+base64
   path: /var/pre_install/install-k8s-agent.sh
 
 # Apply DNS config
@@ -370,15 +370,24 @@ ${indent(2, "\n${chomp(tailscale_bootstrap_script)}")}
 
 # Start the Kubernetes agent install script
 - ['/bin/bash', '/var/pre_install/install-k8s-agent.sh']
-%{if automatically_upgrade_os~}
-
-# Re-enable automatic OS updates. The shared runcmd preamble disables
-# transactional-update.timer for the duration of first boot; on host-module nodes
-# terraform_data.os_upgrade_toggle turns it back on after provisioning, but nodes created
-# by the Cluster Autoscaler have no such resource and would stay disabled forever. This
-# runs last, after the agent install, so re-enabling can no longer race the bootstrap.
-# --now is required: enable alone only creates the symlink, and the unit would not be
-# pulled in until timers.target on the next boot.
+# Restore transactional boot health checks after Kubernetes bootstrap. The
+# service is enabled for the next boot but deliberately not started during
+# cloud-final, avoiding the ordering cycle that required the temporary mask.
+# Automatic updates are restored only when requested, and every operation is
+# fail-closed so a node cannot silently join without its configured patching policy.
 - |
-  systemctl enable --now transactional-update.timer || true
+  set -eu
+  systemctl unmask health-checker.service
+  systemctl enable health-checker.service
+  systemctl is-enabled --quiet health-checker.service
+%{if automatically_upgrade_os~}
+  systemctl enable --now transactional-update.timer
+  systemctl is-enabled --quiet transactional-update.timer
+  systemctl is-active --quiet transactional-update.timer
+%{else~}
+  systemctl disable --now transactional-update.timer
+  if systemctl is-enabled --quiet transactional-update.timer || systemctl is-active --quiet transactional-update.timer; then
+    echo "ERROR: transactional-update.timer remained enabled or active" >&2
+    exit 1
+  fi
 %{endif~}
