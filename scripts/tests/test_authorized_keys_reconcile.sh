@@ -43,7 +43,7 @@ if grep -Fq 'AAAAC3NzaC1lZDI1NTE5AAAAIRemovedOld' "$authorized"; then
   exit 1
 fi
 cmp -s "$managed" "$sidecar"
-[[ "$(stat -f '%Lp' "$authorized" 2>/dev/null || stat -c '%a' "$authorized")" == 600 ]]
+[[ "$(stat -c '%a' "$authorized" 2>/dev/null || stat -f '%Lp' "$authorized")" == 600 ]]
 
 "$reconciler" "$managed" "$authorized" "$sidecar" true
 cmp -s "$managed" "$authorized"
