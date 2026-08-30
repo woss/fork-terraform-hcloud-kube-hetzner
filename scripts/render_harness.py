@@ -188,6 +188,33 @@ def normalize_hcl(source: str) -> str:
     return re.sub(r"\s+", "", source)
 
 
+def assert_agent_floating_ip_config_contract() -> None:
+    """Keep server-only Flannel flags out of generated agent config."""
+
+    agents_source = AGENTS_TF.read_text(encoding="utf-8")
+    k3s_start = agents_source.find("k3s-agent-config =")
+    rke2_start = agents_source.find("rke2-agent-config =", k3s_start)
+    if k3s_start == -1 or rke2_start == -1:
+        fail("agent floating IP config", "could not isolate the K3s agent config local")
+
+    k3s_source = normalize_hcl(agents_source[k3s_start:rke2_start])
+    if "flannel-external-ip" in k3s_source:
+        fail(
+            "agent floating IP config",
+            "K3s agents must not receive the server-only flannel-external-ip flag",
+        )
+    if "node-external-ip=local.agent_external_ip_by_node[k]" not in k3s_source:
+        fail(
+            "agent floating IP config",
+            "floating-IP agents must retain their node-external-ip setting",
+        )
+
+    print_pass(
+        "agent floating IP config",
+        "retains node-external-ip without the server-only Flannel flag",
+    )
+
+
 def assert_agent_private_ipv4_contract(scratch: "TerraformScratch") -> None:
     """Protect v2 identity, external-network opt-out, and shared uniqueness."""
 
@@ -1716,6 +1743,7 @@ def main() -> int:
     try:
         scratch = TerraformScratch(temp_dir, base_render_vars())
         assert_addon_default_versions()
+        assert_agent_floating_ip_config_contract()
         assert_agent_private_ipv4_contract(scratch)
         assert_opensuse_ssh_cloudinit_contract()
         assert_baked_selinux_package_contract()

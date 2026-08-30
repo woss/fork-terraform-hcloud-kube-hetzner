@@ -150,8 +150,7 @@ locals {
     local.multinetwork_overlay_enabled ? {
       node-external-ip = join(",", compact([local.multinetwork_transport_ipv4_enabled ? module.agents[k].ipv4_address : null, local.multinetwork_transport_ipv6_enabled ? module.agents[k].ipv6_address : null]))
       } : lookup(local.agent_external_ip_by_node, k, null) != null ? {
-      node-external-ip    = local.agent_external_ip_by_node[k]
-      flannel-external-ip = true
+      node-external-ip = local.agent_external_ip_by_node[k]
     } : {},
     local.disable_default_registry_endpoint_config,
     var.agent_nodes_custom_config,

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 🐛 Bug Fixes
 
+- Fixed K3s agents with floating IPs receiving the server-only `flannel-external-ip` flag, which prevented the agent service from starting. Floating-IP agents continue to advertise `node-external-ip`.
 - Made the generated-site contract test portable to clean GitHub Actions runners instead of requiring undeclared `rg`. CI installs Zsh and Fish and fails closed when a documented shell verifier is missing; local runs print an explicit skip when an optional shell is unavailable.
 
 ### 🔧 Changes
