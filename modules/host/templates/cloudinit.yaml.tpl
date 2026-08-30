@@ -2,6 +2,14 @@
 
 write_files:
 
+# Reconcile by SSH key identity during first boot. Use this host's effective
+# key list, including keys selected by Hetzner labels.
+- path: /etc/kube-hetzner/managed-authorized-keys
+  content: ${base64encode(sshAuthorizedKeysContent)}
+  encoding: base64
+  owner: root:root
+  permissions: "0600"
+
 ${cloudinit_write_files_common}
 %{~ if length(cloudinit_write_files_extra) > 0 ~}
 ${yamlencode(cloudinit_write_files_extra)}
@@ -211,3 +219,11 @@ ${cloudinit_runcmd_common}
 %{~ if length(cloudinit_runcmd_extra) > 0 ~}
 ${yamlencode(cloudinit_runcmd_extra)}
 %{~ endif ~}
+
+# Keep the Hetzner metadata service reachable when private-network DHCP
+# advertises a more-specific route that black-holes the public metadata path.
+# This fail-closed probe runs last so it cannot skip node bootstrap commands.
+- |
+  (
+${indent(2, "\n${chomp(metadata_route_repair_script)}")}
+  ) || exit 1

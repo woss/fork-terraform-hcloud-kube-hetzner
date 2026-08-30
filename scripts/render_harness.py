@@ -410,6 +410,13 @@ def assert_calico_kustomization_contract() -> None:
         fail("Calico kustomization", f"missing k3s-only patch contract: {missing!r}")
     if "ThisinputisnotconsumedbyRKE2" not in variables_source:
         fail("Calico kustomization", "calico_values does not document its k3s-only contract")
+    for fragment in (
+        "yamldecode(var.calico_values).apiVersion",
+        "yamldecode(var.calico_values).kind",
+        "yamldecode(var.calico_values).metadata.name",
+    ):
+        if fragment not in (REPO_ROOT / "variables.tf").read_text(encoding="utf-8"):
+            fail("Calico kustomization", f"calico_values is missing shape validation for {fragment}")
     init_source = (REPO_ROOT / "init.tf").read_text(encoding="utf-8")
     rke2_start = init_source.find('resource "terraform_data" "rke2_kustomization"')
     if rke2_start == -1:
@@ -504,6 +511,9 @@ def assert_secrets_encryption_lifecycle_contract() -> None:
             "${local.secrets_encryption_staging_file}", str(stage)
         ).replace("${local.secrets_encryption_config_file}", str(destination))
         script_template = script_template.replace(
+            "$${KH_ENCRYPTION_ROLE:-control-plane}", "${KH_ENCRYPTION_ROLE:-control-plane}"
+        )
+        script_template = script_template.replace(
             "/tmp/config.yaml", str(temp_dir / "config.yaml")
         ).replace(
             "/etc/rancher/k3s/config.yaml", str(temp_dir / "k3s-config.yaml")
@@ -541,15 +551,28 @@ done
         env = os.environ.copy()
         env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
 
-        def run_script(*, encryption_requested: bool = True) -> subprocess.CompletedProcess[str]:
+        def run_script(
+            *, encryption_requested: bool = True, role: str = "control-plane"
+        ) -> subprocess.CompletedProcess[str]:
+            run_env = env.copy()
+            run_env["KH_ENCRYPTION_ROLE"] = role
             return subprocess.run(
                 ["bash"],
                 input=enabled_script if encryption_requested else disabled_script,
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                env=env,
+                env=run_env,
             )
+
+        agent = run_script(role="agent")
+        if agent.returncode != 0 or destination.exists():
+            fail(label, f"fresh encrypted agent guard failed: {agent.stderr}")
+
+        stage.write_text("key: must-not-reach-agent\n", encoding="utf-8")
+        agent_with_key = run_script(role="agent")
+        if agent_with_key.returncode == 0 or stage.exists() or destination.exists():
+            fail(label, "agent accepted staged encryption key material")
 
         stage.write_text("key: first\n", encoding="utf-8")
         created = run_script()
@@ -594,10 +617,22 @@ done
         missing = run_script()
         if missing.returncode == 0:
             fail(label, "an enabled configuration accepted a missing installed and staged key")
+
+        agents_source = normalize_hcl(AGENTS_TF.read_text(encoding="utf-8"))
+        locals_source = normalize_hcl(LOCALS_TF.read_text(encoding="utf-8"))
+        if 'inline=["exportKH_ENCRYPTION_ROLE=agent",local.k8s_config_update_script]' not in agents_source:
+            fail(label, "static agent config updates do not declare the agent encryption role")
+        if locals_source.count('["exportKH_ENCRYPTION_ROLE=agent"],') < 2:
+            fail(label, "both k3s and RKE2 agent install paths must declare the agent encryption role")
+        if locals_source.count('"set+u"') < 2:
+            fail(label, "the encryption guard leaks nounset into user pre/post-install hooks")
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
-    print_pass(label, "uses root-only staging, mode 0600, relabeling, cleanup, and fail-safe rotation guards")
+    print_pass(
+        label,
+        "uses explicit node roles, root-only staging, mode 0600, relabeling, cleanup, and fail-safe rotation guards",
+    )
 
 
 def assert_config_update_bootstrap_contract() -> None:
@@ -859,6 +894,7 @@ def base_render_vars() -> dict[str, Any]:
         "nat_gateway_ip": "10.0.0.1",
         "network_gw_ipv4": "10.0.0.1",
         "network_id": 12345,
+        "metadata_route_repair_script": extract_heredoc("metadata_route_repair_script"),
         "os": "leapmicro",
         "peer_private_ip": "10.0.0.3",
         "private_ipv4_default_route": False,
@@ -867,6 +903,7 @@ def base_render_vars() -> dict[str, Any]:
         "public_ipv4_default_route": True,
         "public_ipv6_default_route": True,
         "sshAuthorizedKeysYaml": f'- "{RENDER_SSH_AUTHORIZED_KEY}"\n',
+        "sshAuthorizedKeysContent": f"{RENDER_SSH_AUTHORIZED_KEY}\n",
         "ssh_max_auth_tries": 3,
         "ssh_port": 22,
         "swap_size": "",
@@ -1508,6 +1545,7 @@ def run_autoscaler_os_upgrade_timer_checks() -> None:
     label = "autoscaler OS upgrade timer cloud-init"
     timer_command = "systemctl enable --now transactional-update.timer"
     health_checker_command = "systemctl unmask health-checker.service"
+    metadata_command = "METADATA_IP=169.254.169.254"
     agent_install = "/var/pre_install/install-k8s-agent.sh"
 
     def runcmd_for(upgrade_os: bool) -> list:
@@ -1535,8 +1573,11 @@ def run_autoscaler_os_upgrade_timer_checks() -> None:
     timer_index = index_of(enabled, timer_command)
     if timer_index < 0:
         fail(label, "autoscaler nodes never re-enable transactional-update.timer")
-    if timer_index != len(enabled) - 1:
-        fail(label, "the update policy must be restored by the last runcmd entry")
+    metadata_index = index_of(enabled, metadata_command)
+    if metadata_index != len(enabled) - 1:
+        fail(label, "the fail-closed metadata probe must be the last runcmd entry")
+    if timer_index >= metadata_index:
+        fail(label, "the update policy must be restored before the final metadata probe")
 
     health_checker_index = index_of(enabled, health_checker_command)
     if health_checker_index != timer_index:
@@ -1551,10 +1592,13 @@ def run_autoscaler_os_upgrade_timer_checks() -> None:
     disabled = runcmd_for(False)
     if index_of(disabled, timer_command) >= 0:
         fail(label, "automatically_upgrade_os = false must not re-enable the timer")
-    if index_of(disabled, health_checker_command) != len(disabled) - 1:
+    disabled_metadata_index = index_of(disabled, metadata_command)
+    if disabled_metadata_index != len(disabled) - 1:
+        fail(label, "the disabled-update render must still run the metadata probe last")
+    if index_of(disabled, health_checker_command) >= disabled_metadata_index:
         fail(label, "health-checker must be restored even when automatic updates are disabled")
 
-    policy_script = enabled[-1]
+    policy_script = enabled[timer_index]
     if not isinstance(policy_script, str):
         fail(label, "final update-policy runcmd entry is not a shell script")
     bash_syntax_check(label, policy_script)
@@ -1647,7 +1691,7 @@ set -eu
 case "$*" in
   "-g GENERAL.CON-UUID device show eth0") echo "11111111-2222-3333-4444-555555555555" ;;
   "-g ipv4.routes connection show 11111111-2222-3333-4444-555555555555")
-    [ "${KH_ROUTE_MODE:-direct}" = "stale" ] && echo "169.254.169.254/32 10.0.0.1 400,192.0.2.0/24 172.31.1.1 50" || true
+    [ "${KH_ROUTE_MODE:-direct}" = "stale" ] && echo "192.0.2.0/24 172.31.1.1 50, 169.254.169.254/32 10.0.0.1 400" || true
     ;;
   connection\\ modify*|device\\ reapply*) printf 'nmcli %s\n' "$*" >> "$KH_ROUTE_LOG" ;;
   *) echo "unexpected nmcli invocation: $*" >&2; exit 1 ;;
@@ -1800,6 +1844,29 @@ def run_cloudinit_checks(scratch: TerraformScratch) -> None:
         )
 
         if template_path.name != "nat-router-cloudinit.yaml.tpl":
+            write_files = document.get("write_files")
+            if not isinstance(write_files, list):
+                fail(str(template_path.relative_to(REPO_ROOT)), "write_files is not a list")
+            managed_key_files = [
+                item
+                for item in write_files
+                if isinstance(item, dict)
+                and item.get("path") == "/etc/kube-hetzner/managed-authorized-keys"
+            ]
+            if len(managed_key_files) != 1:
+                fail(
+                    str(template_path.relative_to(REPO_ROOT)),
+                    f"expected one effective managed-key file, got {len(managed_key_files)}",
+                )
+            managed_content = base64.b64decode(
+                str(managed_key_files[0].get("content", "")), validate=True
+            ).decode("utf-8")
+            if managed_content != f"{RENDER_SSH_AUTHORIZED_KEY}\n":
+                fail(
+                    str(template_path.relative_to(REPO_ROOT)),
+                    f"managed SSH key content was {managed_content!r}",
+                )
+
             runcmd = document.get("runcmd")
             if not isinstance(runcmd, list):
                 fail(str(template_path.relative_to(REPO_ROOT)), "runcmd is not a list")
@@ -1814,6 +1881,11 @@ def run_cloudinit_checks(scratch: TerraformScratch) -> None:
                     f"expected one rendered metadata repair block, got {len(metadata_scripts)}",
                 )
             metadata_script = metadata_scripts[0]
+            if runcmd[-1] != metadata_script:
+                fail(
+                    str(template_path.relative_to(REPO_ROOT)),
+                    "fail-closed metadata repair must be the final cloud-init command",
+                )
             bash_syntax_check(
                 f"{template_path.relative_to(REPO_ROOT)} metadata repair",
                 metadata_script,
@@ -1821,7 +1893,7 @@ def run_cloudinit_checks(scratch: TerraformScratch) -> None:
             if not metadata_script.lstrip().startswith("(") or ") || exit 1" not in metadata_script:
                 fail(
                     str(template_path.relative_to(REPO_ROOT)),
-                    "metadata repair must be scoped so internal exit commands cannot terminate cloud-init",
+                    "metadata repair must be scoped and fail the final command visibly",
                 )
             key_reconcile = [
                 item
@@ -1837,7 +1909,7 @@ def run_cloudinit_checks(scratch: TerraformScratch) -> None:
                 )
             print_pass(
                 str(template_path.relative_to(REPO_ROOT)),
-                "renders the real shared runcmd with scoped metadata repair and SSH key reconciliation",
+                "renders effective SSH keys and runs scoped metadata repair last",
             )
 
 

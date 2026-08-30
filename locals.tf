@@ -88,6 +88,7 @@ set -eu
 KH_ENCRYPTION_STAGE="${local.secrets_encryption_staging_file}"
 KH_ENCRYPTION_DEST="${local.secrets_encryption_config_file}"
 KH_ENCRYPTION_REQUESTED="${var.enable_secrets_encryption}"
+KH_ENCRYPTION_ROLE="$${KH_ENCRYPTION_ROLE:-control-plane}"
 KH_ENCRYPTION_INSTALLED=0
 KH_ENCRYPTION_TMP=""
 cleanup_kh_encryption_stage() {
@@ -101,54 +102,69 @@ trap 'cleanup_kh_encryption_stage; exit 129' HUP
 trap 'cleanup_kh_encryption_stage; exit 130' INT
 trap 'cleanup_kh_encryption_stage; exit 143' TERM
 
-relabel_kh_encryption_config() {
-  CONFIG_PATH="$1"
-  if command -v restorecon >/dev/null 2>&1; then
-    restorecon -F "$CONFIG_PATH"
-    return
-  fi
-  if { [ -r /sys/fs/selinux/enforce ] && [ "$(cat /sys/fs/selinux/enforce)" = "1" ]; } || \
-    { command -v getenforce >/dev/null 2>&1 && [ "$(getenforce)" != "Disabled" ]; }; then
-    echo "ERROR: SELinux is active but restorecon is unavailable; cannot install $CONFIG_PATH safely." >&2
+case "$KH_ENCRYPTION_ROLE" in
+  agent | control-plane) ;;
+  *)
+    echo "ERROR: unsupported Kubernetes secrets-encryption node role: $KH_ENCRYPTION_ROLE" >&2
     exit 1
-  fi
-  echo "Info: SELinux is disabled and restorecon is unavailable; skipping relabel for $CONFIG_PATH."
-}
+    ;;
+esac
 
-mkdir -p "$(dirname "$KH_ENCRYPTION_DEST")"
-if [ -s "$KH_ENCRYPTION_STAGE" ]; then
-  if [ "$KH_ENCRYPTION_REQUESTED" != "true" ]; then
-    echo "ERROR: staged Kubernetes secrets-encryption key material exists while encryption is disabled." >&2
+if [ "$KH_ENCRYPTION_ROLE" = "agent" ]; then
+  if [ -s "$KH_ENCRYPTION_STAGE" ]; then
+    echo "ERROR: staged Kubernetes secrets-encryption key material must never be present on an agent node." >&2
     exit 1
   fi
-  if [ -e "$KH_ENCRYPTION_DEST" ] && ! cmp -s "$KH_ENCRYPTION_STAGE" "$KH_ENCRYPTION_DEST"; then
-    echo "ERROR: automatic Kubernetes secrets-encryption key rotation is not supported. Restore the previous Terraform state/key or perform a staged multi-key Kubernetes rotation before applying." >&2
-    exit 1
-  fi
-  if [ ! -e "$KH_ENCRYPTION_DEST" ]; then
-    KH_ENCRYPTION_TMP="$KH_ENCRYPTION_DEST.kube-hetzner-new"
-    install -o root -g root -m 0600 "$KH_ENCRYPTION_STAGE" "$KH_ENCRYPTION_TMP"
-    relabel_kh_encryption_config "$KH_ENCRYPTION_TMP"
-    mv -f "$KH_ENCRYPTION_TMP" "$KH_ENCRYPTION_DEST"
-    KH_ENCRYPTION_TMP=""
-    relabel_kh_encryption_config "$KH_ENCRYPTION_DEST"
-    KH_ENCRYPTION_INSTALLED=1
-  else
+else
+  relabel_kh_encryption_config() {
+    CONFIG_PATH="$1"
+    if command -v restorecon >/dev/null 2>&1; then
+      restorecon -F "$CONFIG_PATH"
+      return
+    fi
+    if { [ -r /sys/fs/selinux/enforce ] && [ "$(cat /sys/fs/selinux/enforce)" = "1" ]; } || \
+      { command -v getenforce >/dev/null 2>&1 && [ "$(getenforce)" != "Disabled" ]; }; then
+      echo "ERROR: SELinux is active but restorecon is unavailable; cannot install $CONFIG_PATH safely." >&2
+      exit 1
+    fi
+    echo "Info: SELinux is disabled and restorecon is unavailable; skipping relabel for $CONFIG_PATH."
+  }
+
+  mkdir -p "$(dirname "$KH_ENCRYPTION_DEST")"
+  if [ -s "$KH_ENCRYPTION_STAGE" ]; then
+    if [ "$KH_ENCRYPTION_REQUESTED" != "true" ]; then
+      echo "ERROR: staged Kubernetes secrets-encryption key material exists while encryption is disabled." >&2
+      exit 1
+    fi
+    if [ -e "$KH_ENCRYPTION_DEST" ] && ! cmp -s "$KH_ENCRYPTION_STAGE" "$KH_ENCRYPTION_DEST"; then
+      echo "ERROR: automatic Kubernetes secrets-encryption key rotation is not supported. Restore the previous Terraform state/key or perform a staged multi-key Kubernetes rotation before applying." >&2
+      exit 1
+    fi
+    if [ ! -e "$KH_ENCRYPTION_DEST" ]; then
+      KH_ENCRYPTION_TMP="$KH_ENCRYPTION_DEST.kube-hetzner-new"
+      install -o root -g root -m 0600 "$KH_ENCRYPTION_STAGE" "$KH_ENCRYPTION_TMP"
+      relabel_kh_encryption_config "$KH_ENCRYPTION_TMP"
+      mv -f "$KH_ENCRYPTION_TMP" "$KH_ENCRYPTION_DEST"
+      KH_ENCRYPTION_TMP=""
+      relabel_kh_encryption_config "$KH_ENCRYPTION_DEST"
+      KH_ENCRYPTION_INSTALLED=1
+    else
+      chown root:root "$KH_ENCRYPTION_DEST"
+      chmod 0600 "$KH_ENCRYPTION_DEST"
+      relabel_kh_encryption_config "$KH_ENCRYPTION_DEST"
+    fi
+  elif [ "$KH_ENCRYPTION_REQUESTED" = "true" ]; then
+    if [ ! -e "$KH_ENCRYPTION_DEST" ]; then
+      echo "ERROR: Kubernetes secrets encryption is configured, but $KH_ENCRYPTION_DEST and its staged replacement are both missing." >&2
+      exit 1
+    fi
     chown root:root "$KH_ENCRYPTION_DEST"
     chmod 0600 "$KH_ENCRYPTION_DEST"
     relabel_kh_encryption_config "$KH_ENCRYPTION_DEST"
-  fi
-elif [ "$KH_ENCRYPTION_REQUESTED" = "true" ]; then
-  if [ ! -e "$KH_ENCRYPTION_DEST" ]; then
-    echo "ERROR: Kubernetes secrets encryption is configured, but $KH_ENCRYPTION_DEST and its staged replacement are both missing." >&2
+  elif [ -e "$KH_ENCRYPTION_DEST" ]; then
+    echo "ERROR: disabling Kubernetes secrets encryption in place can make existing Secrets unreadable. Keep the existing Terraform state/key or migrate workloads to a new cluster with a new key." >&2
     exit 1
   fi
-  chown root:root "$KH_ENCRYPTION_DEST"
-  chmod 0600 "$KH_ENCRYPTION_DEST"
-  relabel_kh_encryption_config "$KH_ENCRYPTION_DEST"
-elif [ -e "$KH_ENCRYPTION_DEST" ]; then
-  echo "ERROR: disabling Kubernetes secrets encryption in place can make existing Secrets unreadable. Keep the existing Terraform state/key or migrate workloads to a new cluster with a new key." >&2
-  exit 1
 fi
 cleanup_kh_encryption_stage
 trap - 0 1 2 15
@@ -693,6 +709,7 @@ fi
 # accumulate duplicates across repeated cloud-init or manual repair runs.
 PERSISTED_ROUTES=$(nmcli -g ipv4.routes connection show "$PUB_UUID" 2>/dev/null || true)
 printf '%s\n' "$PERSISTED_ROUTES" | tr ',' '\n' | while IFS= read -r ROUTE; do
+  ROUTE=$(printf '%s\n' "$ROUTE" | awk '{$1=$1; print}')
   case "$ROUTE" in
     "$METADATA_IP/32"*)
       nmcli connection modify "$PUB_UUID" -ipv4.routes "$ROUTE"
@@ -731,6 +748,8 @@ EOT
       # prepare the k3s config directory
       "mkdir -p /etc/rancher/k3s",
       local.secrets_encryption_install_script,
+      # The guard uses nounset internally; preserve v3.1 hook semantics.
+      "set +u",
       # move the config file into place and adjust permissions
       "[ -f /tmp/config.yaml ] && mv /tmp/config.yaml /etc/rancher/k3s/config.yaml",
       "chmod 0600 /etc/rancher/k3s/config.yaml",
@@ -780,6 +799,8 @@ EOT
       # prepare the rke2 config directory
       "mkdir -p /etc/rancher/rke2",
       local.secrets_encryption_install_script,
+      # The guard uses nounset internally; preserve v3.1 hook semantics.
+      "set +u",
       # move the config file into place and adjust permissions
       "[ -f /tmp/config.yaml ] && mv /tmp/config.yaml /etc/rancher/rke2/config.yaml",
       "chmod 0600 /etc/rancher/rke2/config.yaml",
@@ -1064,6 +1085,7 @@ EOT
   )
 
   install_k3s_agent = concat(
+    ["export KH_ENCRYPTION_ROLE=agent"],
     local.common_pre_install_k3s_commands,
     var.enable_selinux ? local.require_k3s_selinux : [],
     [local.k3s_install_agent_command],
@@ -1071,6 +1093,7 @@ EOT
     local.common_post_install_k3s_commands
   )
   install_rke2_agent = concat(
+    ["export KH_ENCRYPTION_ROLE=agent"],
     local.common_pre_install_k8s_commands,
     var.enable_selinux ? local.require_rke2_selinux : [],
     [local.rke2_install_agent_command],
@@ -3666,15 +3689,6 @@ k8s_config_update_script                = local.kubernetes_distribution == "k3s"
 k8s_authentication_config_update_script = local.kubernetes_distribution == "k3s" ? local.k3s_authentication_config_update_script : local.rke2_authentication_config_update_script
 
 cloudinit_write_files_common = <<EOT
-# Reconcile by SSH key identity during first boot. Hetzner image snapshots can
-# retain a matching key with restrictive options, which cloud-init otherwise
-# treats as a duplicate and leaves in place.
-- path: /etc/kube-hetzner/managed-authorized-keys
-  content: ${base64encode(format("%s\n", join("\n", local.ssh_authorized_keys)))}
-  encoding: base64
-  owner: root:root
-  permissions: "0600"
-
 - path: /usr/local/sbin/kube-hetzner-reconcile-authorized-keys
   content: ${base64gzip(file("${path.module}/scripts/reconcile-authorized-keys.sh"))}
   encoding: gzip+base64
@@ -3988,13 +4002,6 @@ cloudinit_runcmd_common = <<EOT
 - [sed, '-i', '-E', 's/^SELINUX=[a-z]+/SELINUX=disabled/', '/etc/selinux/config']
 - [setenforce, '0']
 %{endif}
-
-# Keep the Hetzner metadata service reachable when private-network DHCP
-# advertises a more-specific route that black-holes the public metadata path.
-- |
-  (
-${indent(2, "\n${chomp(local.metadata_route_repair_script)}")}
-  ) || exit 1
 
 EOT
 

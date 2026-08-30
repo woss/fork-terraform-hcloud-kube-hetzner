@@ -2638,6 +2638,16 @@ variable "calico_values" {
   type        = string
   default     = ""
   description = "Replacement strategic-merge patch for the upstream Calico manifest installed by k3s. This input is not consumed by RKE2, which uses its bundled Calico chart."
+
+  validation {
+    condition = var.calico_values == "" || try(
+      trimspace(yamldecode(var.calico_values).apiVersion) != "" &&
+      trimspace(yamldecode(var.calico_values).kind) != "" &&
+      trimspace(yamldecode(var.calico_values).metadata.name) != "",
+      false
+    )
+    error_message = "calico_values must be empty or a valid Kubernetes strategic-merge patch with apiVersion, kind, and metadata.name."
+  }
 }
 
 variable "enable_longhorn" {

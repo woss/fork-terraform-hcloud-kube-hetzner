@@ -2,6 +2,12 @@
 
 write_files:
 
+- path: /etc/kube-hetzner/managed-authorized-keys
+  content: ${base64encode(sshAuthorizedKeysContent)}
+  encoding: base64
+  owner: root:root
+  permissions: "0600"
+
 ${cloudinit_write_files_common}
 
 %{ if os == "leapmicro" ~}
@@ -378,8 +384,12 @@ ${indent(2, "\n${chomp(tailscale_bootstrap_script)}")}
 - |
   set -eu
   systemctl unmask health-checker.service
-  systemctl enable health-checker.service
-  systemctl is-enabled --quiet health-checker.service
+  if systemctl list-unit-files --no-legend health-checker.service 2>/dev/null | awk '$1 == "health-checker.service" { found = 1 } END { exit !found }'; then
+    systemctl enable health-checker.service
+    systemctl is-enabled --quiet health-checker.service
+  else
+    echo "health-checker.service is not installed in this image; skipping restore"
+  fi
 %{if automatically_upgrade_os~}
   systemctl enable --now transactional-update.timer
   systemctl is-enabled --quiet transactional-update.timer
@@ -391,3 +401,10 @@ ${indent(2, "\n${chomp(tailscale_bootstrap_script)}")}
     exit 1
   fi
 %{endif~}
+
+# Run the fail-closed metadata repair after Kubernetes and host policy setup so
+# a metadata outage cannot prevent the autoscaler node from joining first.
+- |
+  (
+${indent(2, "\n${chomp(metadata_route_repair_script)}")}
+  ) || exit 1

@@ -64,6 +64,7 @@ module "agents" {
   registries_config             = local.registries_config_effective
   registries_update_script      = local.k8s_registries_update_script
   cloudinit_write_files_common  = local.cloudinit_write_files_common
+  metadata_route_repair_script  = local.metadata_route_repair_script
   kubelet_config                = var.kubelet_config
   kubelet_config_update_script  = local.k8s_kubelet_config_update_script
   audit_policy_config           = ""
@@ -260,7 +261,7 @@ resource "terraform_data" "agent_config" {
   }
 
   provisioner "remote-exec" {
-    inline = [local.k8s_config_update_script]
+    inline = ["export KH_ENCRYPTION_ROLE=agent", local.k8s_config_update_script]
   }
 
   depends_on = [

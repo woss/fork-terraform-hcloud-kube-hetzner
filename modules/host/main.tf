@@ -385,8 +385,10 @@ data "cloudinit_config" "config" {
         dns_servers                  = var.dns_servers
         has_dns_servers              = local.has_dns_servers
         sshAuthorizedKeysYaml        = yamlencode(local.ssh_authorized_keys)
+        sshAuthorizedKeysContent     = format("%s\n", join("\n", local.ssh_authorized_keys))
         cloudinit_write_files_common = var.cloudinit_write_files_common
         cloudinit_runcmd_common      = var.cloudinit_runcmd_common
+        metadata_route_repair_script = var.metadata_route_repair_script
         cloudinit_write_files_extra  = var.cloudinit_write_files_extra
         cloudinit_runcmd_extra       = var.cloudinit_runcmd_extra
         swap_size                    = var.swap_size
@@ -518,8 +520,12 @@ resource "terraform_data" "os_upgrade_toggle" {
       set -eu
       echo "Restoring transactional boot health checks after first-boot provisioning"
       systemctl unmask health-checker.service
-      systemctl enable health-checker.service
-      systemctl is-enabled --quiet health-checker.service
+      if systemctl list-unit-files --no-legend health-checker.service 2>/dev/null | awk '$1 == "health-checker.service" { found = 1 } END { exit !found }'; then
+        systemctl enable health-checker.service
+        systemctl is-enabled --quiet health-checker.service
+      else
+        echo "health-checker.service is not installed in this image; skipping restore"
+      fi
 
       if [ "${var.automatically_upgrade_os}" = "true" ]; then
         echo "automatically_upgrade_os changed to true, enabling transactional-update.timer"

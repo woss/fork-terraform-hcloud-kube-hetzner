@@ -1,0 +1,3 @@
+calico_values = <<-YAML
+  wireguardEnabled: true
+YAML

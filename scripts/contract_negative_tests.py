@@ -55,6 +55,12 @@ CASES = [
         expected_substring="not valid YAML",
     ),
     Case(
+        name="bad-calico-patch-shape",
+        var_file=FIXTURE_DIR / "bad-calico-patch-shape.tfvars.fixture",
+        target="module.sut",
+        expected_substring="valid Kubernetes strategic-merge patch",
+    ),
+    Case(
         name="bad-node-annotation-key",
         var_file=FIXTURE_DIR / "bad-node-annotation-key.tfvars.fixture",
         target="module.sut.terraform_data.validation_contract",

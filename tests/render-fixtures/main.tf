@@ -28,6 +28,7 @@ module "sut" {
   kubernetes_distribution = var.kubernetes_distribution
   cni_plugin              = var.cni_plugin
   cilium_routing_mode     = var.cilium_routing_mode
+  calico_values           = var.calico_values
   network_region          = "eu-central"
   enabled_architectures   = ["x86"]
 
@@ -94,6 +95,11 @@ variable "cni_plugin" {
 variable "cilium_routing_mode" {
   type    = string
   default = "tunnel"
+}
+
+variable "calico_values" {
+  type    = string
+  default = ""
 }
 
 variable "ingress_controller" {

@@ -198,13 +198,14 @@ data "cloudinit_config" "autoscaler_config" {
     content = templatefile(
       "${path.module}/templates/autoscaler-cloudinit.yaml.tpl",
       {
-        hostname              = "autoscaler"
-        dns_servers           = var.dns_servers
-        has_dns_servers       = local.has_dns_servers
-        sshAuthorizedKeysYaml = yamlencode(local.ssh_authorized_keys)
-        swap_size             = var.autoscaler_nodepools[count.index].swap_size
-        zram_size             = var.autoscaler_nodepools[count.index].zram_size
-        os                    = local.autoscaler_nodepools_os[count.index]
+        hostname                 = "autoscaler"
+        dns_servers              = var.dns_servers
+        has_dns_servers          = local.has_dns_servers
+        sshAuthorizedKeysYaml    = yamlencode(local.ssh_authorized_keys)
+        sshAuthorizedKeysContent = format("%s\n", join("\n", local.ssh_authorized_keys))
+        swap_size                = var.autoscaler_nodepools[count.index].swap_size
+        zram_size                = var.autoscaler_nodepools[count.index].zram_size
+        os                       = local.autoscaler_nodepools_os[count.index]
         k3s_config = yamlencode(merge(
           {
             server = local.k3s_autoscaler_join_endpoint_by_index[count.index]
@@ -229,6 +230,7 @@ data "cloudinit_config" "autoscaler_config" {
         ))
         cloudinit_write_files_common        = join("", [local.cloudinit_write_files_common, local.autoscaler_node_annotation_write_files_yaml[count.index]])
         cloudinit_runcmd_common             = join("", [local.cloudinit_runcmd_common, local.autoscaler_node_annotation_runcmd_yaml[count.index]])
+        metadata_route_repair_script        = local.metadata_route_repair_script
         private_ipv4_default_route          = !var.autoscaler_enable_public_ipv4 || local.use_nat_router
         public_ipv4_default_route           = var.autoscaler_enable_public_ipv4 && !local.use_nat_router
         public_ipv6_default_route           = var.autoscaler_enable_public_ipv6 && !local.use_nat_router
@@ -258,13 +260,14 @@ data "cloudinit_config" "autoscaler_config_rke2" {
     content = templatefile(
       "${path.module}/templates/autoscaler-cloudinit.yaml.tpl",
       {
-        hostname              = "autoscaler"
-        dns_servers           = var.dns_servers
-        has_dns_servers       = local.has_dns_servers
-        sshAuthorizedKeysYaml = yamlencode(local.ssh_authorized_keys)
-        swap_size             = var.autoscaler_nodepools[count.index].swap_size
-        zram_size             = var.autoscaler_nodepools[count.index].zram_size
-        os                    = local.autoscaler_nodepools_os[count.index]
+        hostname                 = "autoscaler"
+        dns_servers              = var.dns_servers
+        has_dns_servers          = local.has_dns_servers
+        sshAuthorizedKeysYaml    = yamlencode(local.ssh_authorized_keys)
+        sshAuthorizedKeysContent = format("%s\n", join("\n", local.ssh_authorized_keys))
+        swap_size                = var.autoscaler_nodepools[count.index].swap_size
+        zram_size                = var.autoscaler_nodepools[count.index].zram_size
+        os                       = local.autoscaler_nodepools_os[count.index]
         k3s_config = yamlencode(merge(
           {
             server = local.rke2_autoscaler_join_endpoint_by_index[count.index]
@@ -285,6 +288,7 @@ data "cloudinit_config" "autoscaler_config_rke2" {
         install_k8s_agent_script            = join("\n", concat(local.install_k8s_agent, ["systemctl start rke2-agent", "systemctl enable rke2-agent"]))
         cloudinit_write_files_common        = join("", [local.cloudinit_write_files_common, local.autoscaler_node_annotation_write_files_yaml[count.index]])
         cloudinit_runcmd_common             = join("", [local.cloudinit_runcmd_common, local.autoscaler_node_annotation_runcmd_yaml[count.index]])
+        metadata_route_repair_script        = local.metadata_route_repair_script
         private_ipv4_default_route          = !var.autoscaler_enable_public_ipv4 || local.use_nat_router
         public_ipv4_default_route           = var.autoscaler_enable_public_ipv4 && !local.use_nat_router
         public_ipv6_default_route           = var.autoscaler_enable_public_ipv6 && !local.use_nat_router

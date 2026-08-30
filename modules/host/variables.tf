@@ -208,6 +208,11 @@ variable "cloudinit_runcmd_common" {
   type    = string
 }
 
+variable "metadata_route_repair_script" {
+  description = "Fail-closed Hetzner metadata-route reconciliation rendered as the final cloud-init command."
+  type        = string
+}
+
 variable "cloudinit_write_files_extra" {
   type        = list(any)
   default     = []
