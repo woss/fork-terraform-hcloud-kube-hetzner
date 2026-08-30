@@ -927,9 +927,24 @@ def assert_baked_selinux_package_contract() -> None:
     missing = [fragment for fragment in required_fragments if fragment not in install_sources]
     if missing:
         fail("baked SELinux package contract", f"missing fragments: {missing!r}")
+
+    rke2_post_install = extract_heredoc("common_post_install_rke2_commands")
+    bash_syntax_check("RKE2 SELinux install-path relabel", rke2_post_install)
+    normalized_post_install = normalize_hcl(rke2_post_install)
+    required_rke2_relabel = (
+        "semanagefcontext-a-tcontainer_runtime_exec_t'/opt/rke2/bin/rke2'",
+        "semanagefcontext-m-tcontainer_runtime_exec_t'/opt/rke2/bin/rke2'",
+        "stat-c'%C'/opt/rke2/bin/rke2",
+        "ERROR:/opt/rke2/bin/rke2isnotlabeledcontainer_runtime_exec_t",
+    )
+    missing_relabel = [
+        fragment for fragment in required_rke2_relabel if fragment not in normalized_post_install
+    ]
+    if missing_relabel:
+        fail("RKE2 SELinux install-path relabel", f"missing fragments: {missing_relabel!r}")
     print_pass(
         "baked SELinux package contract",
-        "k3s and RKE2 require the image-baked policy package and disable runtime SELinux RPM installation",
+        "k3s and RKE2 require baked policy packages, and /opt RKE2 enters its confined runtime domain",
     )
 
 

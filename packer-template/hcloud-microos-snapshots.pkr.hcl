@@ -255,8 +255,8 @@ locals {
   # MicroOS publishes rolling aliases. The signed sidecars authenticate the
   # publisher; these separately reviewed exact-byte pins prevent silent alias
   # movement. A publisher refresh therefore fails closed until explicitly reviewed.
-  opensuse_microos_reviewed_x86_sha256          = "514010036aad0b4b35ec16039e11f6ae9cf6d550a7f5fa460e80beb801e22740"
-  opensuse_microos_reviewed_arm_sha256          = "e291d2f6497b70079120fbb46f42caa6d92b051fdef0ee163d8c3cc4a50ad789"
+  opensuse_microos_reviewed_x86_sha256          = "015f2b6b2ec1cd9480e372cea97cf4cd8e75869005ff2200b617629532dc05e1"
+  opensuse_microos_reviewed_arm_sha256          = "d3e080c1bff16fc685c1de1c842a0bdf3653637e88514cbfc47c711c44fb9401"
   opensuse_microos_x86_expected_sha256_computed = local.opensuse_microos_x86_is_custom ? lower(var.opensuse_microos_x86_expected_sha256) : var.opensuse_microos_x86_expected_sha256 != "" ? lower(var.opensuse_microos_x86_expected_sha256) : local.opensuse_microos_reviewed_x86_sha256
   opensuse_microos_arm_expected_sha256_computed = local.opensuse_microos_arm_is_custom ? lower(var.opensuse_microos_arm_expected_sha256) : var.opensuse_microos_arm_expected_sha256 != "" ? lower(var.opensuse_microos_arm_expected_sha256) : local.opensuse_microos_reviewed_arm_sha256
 
@@ -309,10 +309,85 @@ locals {
       || { echo "ERROR: signed checksum did not select the canonical appliance pathname" >&2; exit 1; }
   EOT
 
+  # The rolling appliance currently ships cloud-init 25.1.3 with dhcpcd 10.5.2.
+  # On Hetzner, dhcpcd obtains a lease but does not return from cloud-init's
+  # ephemeral metadata-network command. Select cloud-init's bundled BusyBox
+  # udhcpc client before the first boot so metadata discovery can complete.
+  prepare_microos_first_boot = <<-EOT
+    sync
+    blockdev --rereadpt /dev/sda || true
+    partprobe /dev/sda || true
+    partx -u /dev/sda || true
+    udevadm trigger --subsystem-match=block
+    udevadm settle
+
+    root_device=""
+    for attempt in $(seq 1 30); do
+      root_device="$(blkid -L ROOT 2>/dev/null || true)"
+      case "$root_device" in
+        /dev/sda*) break ;;
+        *) root_device="" ;;
+      esac
+      partprobe /dev/sda || true
+      partx -u /dev/sda || true
+      udevadm settle
+      sleep 1
+    done
+    [ -b "$root_device" ] \
+      || { echo "ERROR: written MicroOS image is missing the ROOT block device" >&2; exit 1; }
+    [ "$(blkid -s TYPE -o value "$root_device")" = "btrfs" ] \
+      || { echo "ERROR: written MicroOS ROOT filesystem is not Btrfs" >&2; exit 1; }
+
+    mount_dir="$(mktemp -d)"
+    root_mounted=0
+    local_mounted=0
+    cleanup_first_boot_mounts() {
+      set +e
+      [ "$local_mounted" -eq 0 ] || umount "$mount_dir/usr/local"
+      [ "$root_mounted" -eq 0 ] || umount "$mount_dir"
+      rmdir "$mount_dir"
+    }
+    trap cleanup_first_boot_mounts EXIT HUP INT TERM
+
+    mount "$root_device" "$mount_dir"
+    root_mounted=1
+    [ -d "$mount_dir/etc/cloud/cloud.cfg.d" ] \
+      || { echo "ERROR: written MicroOS image is missing cloud-init configuration" >&2; exit 1; }
+    [ -x "$mount_dir/usr/bin/busybox" ] \
+      || { echo "ERROR: written MicroOS image is missing BusyBox" >&2; exit 1; }
+    chroot "$mount_dir" /usr/bin/busybox --list | grep -Fxq udhcpc \
+      || { echo "ERROR: written MicroOS BusyBox is missing the udhcpc applet" >&2; exit 1; }
+
+    mount -o subvol=@/usr/local "$root_device" "$mount_dir/usr/local"
+    local_mounted=1
+    install -d -m 0755 "$mount_dir/usr/local/sbin"
+    ln -snf /usr/bin/busybox "$mount_dir/usr/local/sbin/udhcpc"
+    printf '%s\n' \
+      'system_info:' \
+      '  network:' \
+      '    dhcp_client_priority: [udhcpc]' \
+      > "$mount_dir/etc/cloud/cloud.cfg.d/10-kube-hetzner-dhcp-client.cfg"
+    chmod 0644 "$mount_dir/etc/cloud/cloud.cfg.d/10-kube-hetzner-dhcp-client.cfg"
+    [ "$(readlink "$mount_dir/usr/local/sbin/udhcpc")" = "/usr/bin/busybox" ] \
+      || { echo "ERROR: failed to expose the verified udhcpc applet" >&2; exit 1; }
+    grep -Fxq '    dhcp_client_priority: [udhcpc]' \
+      "$mount_dir/etc/cloud/cloud.cfg.d/10-kube-hetzner-dhcp-client.cfg" \
+      || { echo "ERROR: failed to configure cloud-init's udhcpc priority" >&2; exit 1; }
+
+    sync
+    umount "$mount_dir/usr/local"
+    local_mounted=0
+    umount "$mount_dir"
+    root_mounted=0
+    rmdir "$mount_dir"
+    trap - EXIT HUP INT TERM
+  EOT
+
   write_x86_image = <<-EOT
     set -ex
     echo 'MicroOS image loaded, writing to disk... '
     qemu-img convert -p -f qcow2 -O host_device '${local.opensuse_microos_x86_image_path}' /dev/sda
+    ${local.prepare_microos_first_boot}
     echo 'done. Rebooting...'
     sleep 1 && udevadm settle && reboot
   EOT
@@ -321,6 +396,7 @@ locals {
     set -ex
     echo 'MicroOS image loaded, writing to disk... '
     qemu-img convert -p -f qcow2 -O host_device '${local.opensuse_microos_arm_image_path}' /dev/sda
+    ${local.prepare_microos_first_boot}
     echo 'done. Rebooting...'
     sleep 1 && udevadm settle && reboot
   EOT

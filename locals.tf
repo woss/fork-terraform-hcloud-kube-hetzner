@@ -965,7 +965,26 @@ EOT
   common_post_install_rke2_commands = concat(var.postinstall_exec, [<<-EOT
 if command -v restorecon >/dev/null 2>&1; then
   [ -f /usr/local/bin/rke2 ] && restorecon -v /usr/local/bin/rke2 || true
-  [ -f /opt/rke2/bin/rke2 ] && restorecon -v /opt/rke2/bin/rke2 || true
+  if [ -f /opt/rke2/bin/rke2 ]; then
+    if command -v semanage >/dev/null 2>&1; then
+      semanage fcontext -a -t container_runtime_exec_t '/opt/rke2/bin/rke2' 2>/dev/null || \
+        semanage fcontext -m -t container_runtime_exec_t '/opt/rke2/bin/rke2'
+    elif command -v getenforce >/dev/null 2>&1 && [ "$(getenforce)" != "Disabled" ]; then
+      echo "ERROR: semanage is required to confine RKE2 installed under /opt" >&2
+      exit 1
+    fi
+    restorecon -v /opt/rke2/bin/rke2
+    if command -v getenforce >/dev/null 2>&1 && [ "$(getenforce)" != "Disabled" ]; then
+      RKE2_CONTEXT=$(stat -c '%C' /opt/rke2/bin/rke2 2>/dev/null || true)
+      case "$RKE2_CONTEXT" in
+        *:container_runtime_exec_t:*) ;;
+        *)
+          echo "ERROR: /opt/rke2/bin/rke2 is not labeled container_runtime_exec_t" >&2
+          exit 1
+          ;;
+      esac
+    fi
+  fi
   [ -d /var/lib/rancher/rke2 ] && restorecon -RF /var/lib/rancher/rke2 || true
 else
   echo "restorecon not available; skipping RKE2 relabel"

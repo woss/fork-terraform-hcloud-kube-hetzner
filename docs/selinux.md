@@ -57,6 +57,7 @@ tightening to happen with targeted local policies when needed.
 | `container_var_run_t` | Allow container run-state file updates. | `2d75628` "fix SELinux module not applying"; purpose inferred from target label. |
 | `fixed_disk_device_t` and `removable_device_t` block `getattr` | SigNoz host metrics over block devices. | `f582c89`, reported in issue `#697`. |
 | `container_t kernel_t:tcp_socket { read write }` | Let CSI liveness/readiness probes talk to kernel-labeled sockets instead of crash-looping. | `62426d9` / PR `#2229`, fixes issue `#2203`; backported from the v3 Leap Micro policy. |
+| `/opt/rke2/bin/rke2` as `container_runtime_exec_t` | Make RKE2 enter `container_runtime_t` when immutable `/usr/local` forces the verified tar install under `/opt`; this keeps its containers and CSI sockets in Rancher's intended SELinux domains. | Added from a v3.2.0 MicroOS/RKE2 canary: the default `bin_t` path produced an RKE2 confinement warning and exact HCloud CSI Unix-socket AVC denials. Relabeling removed both without adding an `unconfined_service_t` allow rule. |
 | Leap Micro `cert_t`, `proc_t`, `sysfs_t`, `security_t`, `init_t` reads | Metrics-server and node-exporter host metric collection. | `4346724` added `k8s_custom_policies`; purposes are documented in the file comments. |
 | Leap Micro port, node, peer, and container TCP rules | Metrics/exporter binds, arbitrary Kubernetes workload high-port binds, and readiness/liveness traffic. | `4346724` added `k8s_custom_policies`; purposes are documented in the file comments. |
 
