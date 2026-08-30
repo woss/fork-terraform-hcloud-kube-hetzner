@@ -112,7 +112,7 @@ Hetzner Cloud limits server `user_data` to 32 KiB. Kube-hetzner compresses its l
 
 #### Repair existing autoscaler update services
 
-New autoscaler nodes restore `health-checker.service` after first boot and match `transactional-update.timer` to `automatically_upgrade_os`. Existing autoscaler nodes retain their original cloud-init, so repair them in place one at a time over SSH:
+New autoscaler nodes restore `health-checker.service` after first boot and match `transactional-update.timer` to `automatically_upgrade_os`. Existing static nodes are repaired automatically on the next apply, including a persistent post-cloud-init repair for legacy payloads that mask the checker again on every boot. Existing autoscaler nodes retain their original cloud-init, so repair them in place one at a time over SSH:
 
 ```sh
 systemctl unmask health-checker.service

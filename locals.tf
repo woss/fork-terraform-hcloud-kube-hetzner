@@ -190,11 +190,69 @@ unit_exists() {
   systemctl list-unit-files --no-legend "$1" 2>/dev/null | awk -v unit="$1" '$1 == unit { found = 1 } END { exit !found }'
 }
 
+legacy_cloud_init_masks_health_checker() {
+  for cloud_config in \
+    /var/lib/cloud/instance/cloud-config.txt \
+    /var/lib/cloud/instance/user-data.txt.i
+  do
+    if [ -f "$cloud_config" ] && \
+      grep -Fq 'systemctl mask health-checker.service' "$cloud_config" && \
+      ! grep -Fq 'cloud-init-per' "$cloud_config"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+install_legacy_health_checker_restore() {
+  install -d -m 0755 /usr/local/sbin
+  cat > /usr/local/sbin/kube-hetzner-restore-health-checker <<'KH_HEALTH_CHECKER_RESTORE'
+#!/bin/sh
+set -eu
+
+if ! systemctl list-unit-files --no-legend health-checker.service 2>/dev/null | awk '$1 == "health-checker.service" { found = 1 } END { exit !found }'; then
+  exit 0
+fi
+
+boot_id=$(cat /proc/sys/kernel/random/boot_id)
+checked_boot_id=$(cat /run/kube-hetzner-health-checker-boot-id 2>/dev/null || true)
+systemctl unmask health-checker.service
+systemctl enable health-checker.service
+if [ "$checked_boot_id" != "$boot_id" ]; then
+  systemctl start health-checker.service
+  systemctl is-active --quiet health-checker.service
+fi
+systemctl is-enabled --quiet health-checker.service
+KH_HEALTH_CHECKER_RESTORE
+  chmod 0755 /usr/local/sbin/kube-hetzner-restore-health-checker
+
+  install -d -m 0755 /etc/systemd/system/health-checker.service.d
+  cat > /etc/systemd/system/health-checker.service.d/kube-hetzner-boot-marker.conf <<'KH_HEALTH_CHECKER_MARKER'
+[Service]
+ExecStartPost=/bin/sh -c 'cat /proc/sys/kernel/random/boot_id > /run/kube-hetzner-health-checker-boot-id'
+KH_HEALTH_CHECKER_MARKER
+  chmod 0644 /etc/systemd/system/health-checker.service.d/kube-hetzner-boot-marker.conf
+
+  install -d -m 0755 /etc/systemd/system/cloud-final.service.d
+  cat > /etc/systemd/system/cloud-final.service.d/kube-hetzner-health-checker.conf <<'KH_CLOUD_FINAL_DROPIN'
+[Service]
+ExecStartPost=/usr/local/sbin/kube-hetzner-restore-health-checker
+KH_CLOUD_FINAL_DROPIN
+  chmod 0644 /etc/systemd/system/cloud-final.service.d/kube-hetzner-health-checker.conf
+  systemctl daemon-reload
+  /usr/local/sbin/kube-hetzner-restore-health-checker
+}
+
 echo "Restoring transactional boot health checks after Kubernetes provisioning"
 if unit_exists health-checker.service; then
-  systemctl unmask health-checker.service
-  systemctl enable health-checker.service
-  systemctl is-enabled --quiet health-checker.service
+  if legacy_cloud_init_masks_health_checker; then
+    echo "Installing persistent health-checker repair for legacy cloud-init"
+    install_legacy_health_checker_restore
+  else
+    systemctl unmask health-checker.service
+    systemctl enable health-checker.service
+    systemctl is-enabled --quiet health-checker.service
+  fi
 else
   echo "health-checker.service is not installed in this image; skipping restore"
 fi

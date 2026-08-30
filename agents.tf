@@ -361,7 +361,7 @@ resource "terraform_data" "agent_os_update_services" {
   triggers_replace = {
     agent_id         = module.agents[each.key].id
     os_upgrade_state = var.automatically_upgrade_os ? "enabled" : "disabled"
-    service_policy   = "post-kubernetes-bootstrap-v2"
+    service_policy   = "post-kubernetes-bootstrap-v4"
   }
 
   connection {

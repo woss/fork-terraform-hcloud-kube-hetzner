@@ -819,7 +819,7 @@ resource "terraform_data" "control_plane_os_update_services" {
   triggers_replace = {
     control_plane_id = module.control_planes[each.key].id
     os_upgrade_state = var.automatically_upgrade_os ? "enabled" : "disabled"
-    service_policy   = "post-kubernetes-bootstrap-v2"
+    service_policy   = "post-kubernetes-bootstrap-v4"
   }
 
   connection {

@@ -1710,6 +1710,7 @@ def assert_static_os_update_service_ordering_contract() -> None:
     control_planes_source = normalize_hcl((REPO_ROOT / "control_planes.tf").read_text(encoding="utf-8"))
     host_source = normalize_hcl((REPO_ROOT / "modules/host/main.tf").read_text(encoding="utf-8"))
     locals_source = extract_heredoc("os_update_services_reconcile_script")
+    bash_syntax_check(label, locals_source)
     required = (
         (agents_source, 'resource"terraform_data""agent_os_update_services"'),
         (agents_source, "depends_on=[terraform_data.agents]"),
@@ -1717,7 +1718,13 @@ def assert_static_os_update_service_ordering_contract() -> None:
         (control_planes_source, "terraform_data.control_planes_rke2"),
         (control_planes_source, "terraform_data.control_planes"),
         (agents_source + control_planes_source, "inline=[local.os_update_services_reconcile_script]"),
+        (agents_source + control_planes_source, 'service_policy="post-kubernetes-bootstrap-v4"'),
         (locals_source, "unit_exists transactional-update.timer"),
+        (locals_source, "legacy_cloud_init_masks_health_checker"),
+        (locals_source, "/etc/systemd/system/health-checker.service.d/kube-hetzner-boot-marker.conf"),
+        (locals_source, "/etc/systemd/system/cloud-final.service.d/kube-hetzner-health-checker.conf"),
+        (locals_source, "ExecStartPost=/usr/local/sbin/kube-hetzner-restore-health-checker"),
+        (locals_source, "/run/kube-hetzner-health-checker-boot-id"),
         (host_source, "cloud-final.servicefailed;recentdiagnosticsfollow:"),
         (host_source, "journalctl-ucloud-final.service-n80--no-pager"),
     )
