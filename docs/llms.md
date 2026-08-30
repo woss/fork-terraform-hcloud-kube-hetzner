@@ -1211,6 +1211,12 @@ Excellent! Let's continue our meticulous dissection.
   * **Benefit:** Automates the reboot process for OS updates, which is crucial for maintaining security and stability, especially when `automatically_upgrade_os` is enabled.
   * **Reference:** The GitHub releases link helps find specific Kured versions.
 
+* **`enable_kured` (Boolean, Optional):**
+  * **Default:** `true`.
+  * **Purpose:** Includes the module-managed Kured DaemonSet and its RBAC for safe, coordinated node reboots after transactional OS updates.
+  * **Usage:** Set to `false` only when reboot orchestration is managed externally, such as through GitOps or another reboot controller.
+  * **Considerations:** Disabling it does not prune Kured resources that were already applied. If `automatically_upgrade_os = true`, host update timers keep running without module-managed reboot orchestration.
+
 ---
 
 **Section 2.11: Ingress Controller Configuration**
@@ -1464,6 +1470,12 @@ Excellent! Let's continue our meticulous dissection.
     * **Non-HA Setup:** Can be risky if an upgrade fails on the single control plane. Often recommended to set to `false` or manage very carefully.
   * **Mechanism:** Uses the [System Upgrade Controller](https://github.com/rancher/system-upgrade-controller), which is deployed into the cluster.
 
+* **`enable_system_upgrade_controller` (Boolean, Optional):**
+  * **Default:** `true`.
+  * **Purpose:** Includes the System Upgrade Controller, its CRDs, and module-managed Kubernetes upgrade plans.
+  * **Usage:** Set to `false` when the controller and plans are managed externally, for example through GitOps.
+  * **Considerations:** Disabling it does not prune resources already applied. With `automatically_upgrade_kubernetes = true`, upgrade labels may remain on nodes but are inert without a controller and plans.
+
 ```terraform
   # By default nodes are drained before k3s upgrade, which will delete and transfer all pods to other nodes.
   # Set this to false to cordon nodes instead, which just prevents scheduling new pods on the node during upgrade
@@ -1505,11 +1517,11 @@ Excellent! Let's continue our meticulous dissection.
 
 * **`automatically_upgrade_os` (Boolean, Optional):**
   * **Default:** `true` (for HA setups).
-  * **Purpose:** Controls whether the underlying operating system packages on the nodes are automatically upgraded.
-    * `true`: The module likely configures unattended upgrades (e.g., `unattended-upgrades` package on Debian/Ubuntu) or a similar mechanism to automatically install OS security patches and updates. Kured then handles the reboots if required.
-    * `false`: Disables automatic OS upgrades. You would be responsible for manually updating the OS on each node.
+  * **Purpose:** Controls the host `transactional-update.timer` on Leap Micro/MicroOS nodes.
+    * `true`: Enables transactional OS updates. `health-checker.service` validates the next boot and Kured coordinates required reboots when `enable_kured = true`.
+    * `false`: Disables the transactional update timer. You are responsible for OS updates and reboots.
   * **Critical Constraint for Non-HA:** "For non-HA clusters ... you have to turn it off." If you have a single control plane, an automatic OS upgrade that requires a reboot (and is handled by Kured) will cause downtime for the entire Kubernetes API.
-  * **Rollback Mention:** The comment "automatic roll-back to the previous snapshot" likely refers to features of the underlying OS or bootloader (e.g., transactional updates with `btrfs` snapshots as used by openSUSE MicroOS, which this module uses as the base OS image). If an OS upgrade fails, the system might be able to roll back to a pre-upgrade state.
+  * **Rollback:** Transactional updates boot a new btrfs snapshot. `health-checker.service` validates that boot and preserves the OS rollback path when the new snapshot is unhealthy.
 
 ```terraform
   # If you need more control over kured and the reboot behaviour, you can pass additional options to kured.
@@ -2032,6 +2044,12 @@ Excellent! Let's continue our meticulous dissection.
   * **Requirements:** `cni_plugin = "cilium"`, `enable_kube_proxy = false`, and an exact `cilium_version` supported by the module's Gateway API CRD mapping.
   * **Cert-Manager:** When this or Traefik Gateway provider support is enabled, cert-manager Gateway API support is enabled as well.
   * **Example:** See `examples/cilium-gateway-api`.
+
+* **`gateway_api_version` (String, Optional):**
+  * **Default:** `""`, which derives the standard Gateway API CRD release from the selected Cilium line.
+  * **Purpose:** Pins the standard `kubernetes-sigs/gateway-api` CRD bundle independently when Cilium Gateway API or Traefik's Kubernetes Gateway provider is enabled.
+  * **Usage:** Set an exact release tag such as `"v1.5.1"` when the derived bundle is not the intended operator contract.
+  * **Considerations:** This selects CRDs, not the Gateway controller. Enable exactly one supported Gateway controller per cluster.
 
 ```terraform
   # Enables Hubble Observability to collect and visualize network traffic. Default: false
@@ -3039,6 +3057,12 @@ The following variables have been added to the `kube-hetzner` module since the i
     * `extra_runcmd`: (Optional, default: []) List of extra shell commands to run as root after the NAT router's cloud-init completes. Terraform reruns these commands when the list changes, so keep them idempotent. Useful for installing additional packages, fetching certificates, or running custom setup scripts.
   * **Port Forwarding:** When the control plane LB has no public interface (`control_plane_load_balancer_enable_public_network = false`), the NAT router automatically configures iptables rules to forward incoming traffic on port 6443 to the control plane LB's private IP. This allows external kubectl access while keeping the control plane LB completely private.
 
+* **`use_private_nat_router_bastion` (Boolean, Optional):**
+  * **Default:** `false`.
+  * **Purpose:** Makes Terraform connect through the NAT router's private IP instead of its public IP when the router is the SSH bastion.
+  * **Requirements:** The operator already needs network-level reachability to the private Network, such as through Tailscale or WireGuard.
+  * **Considerations:** This supports an egress-only public NAT router. External access products remain operator-managed access paths; they are not module-managed Kubernetes node transport.
+
 **k3s Binary Configuration**
 
 ```terraform
@@ -3254,6 +3278,12 @@ Each of these `*_values` variables:
 * **Reference:** See each component's Helm chart documentation for available options
 * **Note:** Indentation within the heredoc is significant
 
+* **`hetzner_ccm_values` (String, Optional):**
+  * **Default:** `""`.
+  * **Purpose:** Replaces the default Hetzner Cloud Controller Manager Helm values passed as `valuesContent`.
+  * **Usage:** Provide a YAML heredoc or `file(...)` when the complete CCM values document is operator-owned.
+  * **Considerations:** Use `hetzner_ccm_merge_values` for a deep overlay on module defaults instead of replacing the entire values document.
+
 **Ingress Controller Versions and Values**
 
 ```terraform
@@ -3444,6 +3474,12 @@ These variables are part of the current v3 module contract and should be conside
 * **`tailscale_oauth_client_secret` (String, Optional, Sensitive):**
   * **Default:** `null`.
   * **Purpose:** Provides the OAuth client secret for `tailscale_node_transport.auth.mode = "oauth_client_secret"`. The module appends role-specific OAuth auth-key parameters so static nodes default to durable devices and autoscaler nodes default to ephemeral devices.
+
+* **`multinetwork_mode` (String, Optional):**
+  * **Default:** `"disabled"`.
+  * **Purpose:** Selects the legacy single-private-network topology or the experimental `"cilium_public_overlay"` multinetwork preview.
+  * **Requirements:** The public-overlay preview requires `enable_experimental_cilium_public_overlay = true`, Cilium, public node transport addresses for the selected family, and compatible public control-plane reachability.
+  * **Considerations:** This preview is not production-supported. Use `node_transport_mode = "tailscale"` for the supported private multinetwork path.
 
 * **`enable_experimental_cilium_public_overlay` (Boolean, Optional):**
   * **Default:** `false`.
