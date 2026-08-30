@@ -108,7 +108,7 @@ Enable with `autoscaler_nodepools`. Powered by [Cluster Autoscaler](https://gith
 
 Cluster Autoscaler will not scale down nodes that run pods with local storage unless explicitly configured to do so. For disposable local data, add `--skip-nodes-with-local-storage=false` to `cluster_autoscaler_extra_args` or annotate individual pods with `cluster-autoscaler.kubernetes.io/safe-to-evict: "true"`.
 
-Hetzner Cloud limits server `user_data` to 32 KiB. Kube-hetzner compresses its large autoscaler cloud-init payloads and rejects an oversized rendered node configuration during `terraform plan`. If that guard fails, reduce custom `agent_nodes_custom_config`, `kubelet_config`, `registries_config`, node annotations, or extra bootstrap commands instead of bypassing the limit.
+Hetzner Cloud limits server `user_data` to 32 KiB. Kube-hetzner compresses its large autoscaler cloud-init payloads and rejects an oversized rendered node configuration during `terraform plan`. The v3.2 release canary measured 29,520 bytes before user customizations, so keep custom payloads small and treat the plan guard as a hard API limit. If that guard fails, reduce custom `agent_nodes_custom_config`, `kubelet_config`, `registries_config`, node annotations, or extra bootstrap commands instead of bypassing the limit.
 
 #### Repair existing autoscaler update services
 

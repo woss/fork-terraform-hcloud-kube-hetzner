@@ -411,6 +411,10 @@ ${indent(2, "\n${chomp(tailscale_bootstrap_script)}")}
       echo "transactional-update.timer is not installed in this image; skipping update-policy reconciliation"
     fi
   )
+  KH_UPDATE_POLICY_STATUS=$?
+  if [ "$KH_UPDATE_POLICY_STATUS" -ne 0 ]; then
+    exit "$KH_UPDATE_POLICY_STATUS"
+  fi
 
 # Run the fail-closed metadata repair after Kubernetes and host policy setup so
 # a metadata outage cannot prevent the autoscaler node from joining first.

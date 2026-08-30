@@ -9,12 +9,9 @@ resource "terraform_data" "agent_firewall_validation_contract" {
   lifecycle {
     precondition {
       condition = alltrue([
-        for agent_nodepool in var.agent_nodepools :
-        length(distinct(concat(var.extra_firewall_ids, agent_nodepool.extra_firewall_ids))) <= 4 &&
-        alltrue([
-          for agent_node in values(coalesce(agent_nodepool.nodes, {})) :
-          length(distinct(concat(var.extra_firewall_ids, agent_nodepool.extra_firewall_ids, agent_node.extra_firewall_ids))) <= 4
-        ])
+        for agent_node in values(local.agent_nodes) :
+        (agent_node.disable_ipv4 && agent_node.disable_ipv6) ||
+        length(distinct(concat(var.extra_firewall_ids, agent_node.extra_firewall_ids))) <= 4
       ])
       error_message = "A public server can attach at most five Hetzner Firewalls. The module-managed firewall uses one slot, so global, nodepool, and node extra_firewall_ids may contain at most four unique IDs in total."
     }

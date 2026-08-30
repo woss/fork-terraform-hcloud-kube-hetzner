@@ -237,6 +237,45 @@ def scenarios(external_network_id: str | None) -> list[Scenario]:
             """,
         ),
         Scenario(
+            name="private-agent-extra-firewall-budget-ignored-valid",
+            extra_module_hcl="",
+            expect_success=True,
+            agent_nodepools_hcl="""
+            agent_nodepools = [
+              {
+                name               = "agent"
+                server_type        = "cx23"
+                location           = "nbg1"
+                labels             = []
+                taints             = []
+                count              = 1
+                enable_public_ipv4 = false
+                enable_public_ipv6 = false
+                extra_firewall_ids = [1, 2, 3, 4, 5]
+              }
+            ]
+            """,
+        ),
+        Scenario(
+            name="public-agent-extra-firewall-budget-invalid",
+            extra_module_hcl="",
+            expect_success=False,
+            expect_output=("A public server can attach at most five Hetzner Firewalls",),
+            agent_nodepools_hcl="""
+            agent_nodepools = [
+              {
+                name               = "agent"
+                server_type        = "cx23"
+                location           = "nbg1"
+                labels             = []
+                taints             = []
+                count              = 1
+                extra_firewall_ids = [1, 2, 3, 4, 5]
+              }
+            ]
+            """,
+        ),
+        Scenario(
             name="cilium-gateway-api-valid",
             extra_module_hcl="""
             cni_plugin                 = "cilium"

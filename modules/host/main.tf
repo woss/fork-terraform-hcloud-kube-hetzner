@@ -111,6 +111,7 @@ resource "terraform_data" "initial_readiness" {
       # that unit is non-critical here and is managed explicitly later.
       <<-EOT
       timeout 600 bash <<'EOF'
+      cloud_final_diagnostics_shown=false
       while true; do
         state="$(systemctl is-system-running 2>/dev/null || true)"
 
@@ -128,6 +129,12 @@ resource "terraform_data" "initial_readiness" {
 
           echo "Waiting for system; failed units remain:"
           printf '%s\n' "$failed_units"
+          if [ "$cloud_final_diagnostics_shown" = false ] && printf '%s\n' "$failed_units" | grep -qx 'cloud-final.service'; then
+            cloud_final_diagnostics_shown=true
+            echo "cloud-final.service failed; recent diagnostics follow:"
+            systemctl status cloud-final.service --no-pager -l || true
+            journalctl -u cloud-final.service -n 80 --no-pager || true
+          fi
         else
           echo "Waiting for system... ($state)"
         fi

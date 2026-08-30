@@ -361,7 +361,7 @@ def assert_agent_extra_firewall_ids_contract(scratch: "TerraformScratch") -> Non
 
     required_validation_fragments = (
         "length(distinct(var.extra_firewall_ids))<=4",
-        "length(distinct(concat(var.extra_firewall_ids,agent_nodepool.extra_firewall_ids,agent_node.extra_firewall_ids)))<=4",
+        "(agent_node.disable_ipv4&&agent_node.disable_ipv6)||length(distinct(concat(var.extra_firewall_ids,agent_node.extra_firewall_ids)))<=4",
     )
     validation_sources = variables_source + validation_contract_source
     missing_validations = [fragment for fragment in required_validation_fragments if fragment not in validation_sources]
@@ -702,7 +702,7 @@ set -eu
 case "$1" in
   is-active) exit 1 ;;
   cat) exit 0 ;;
-  restart) printf '%s\n' "$2" >> "$KH_SYSTEMCTL_LOG" ;;
+  reset-failed|restart) printf '%s %s\n' "$1" "$2" >> "$KH_SYSTEMCTL_LOG" ;;
 esac
 """,
             encoding="utf-8",
@@ -766,10 +766,14 @@ done
                     env=env,
                 )
                 restarted = systemctl_log.read_text(encoding="utf-8").splitlines() if systemctl_log.exists() else []
-                if result.returncode != 0 or restarted != [expected_service]:
+                expected_systemctl = [
+                    f"reset-failed {expected_service}",
+                    f"restart {expected_service}",
+                ]
+                if result.returncode != 0 or restarted != expected_systemctl:
                     fail(
                         label,
-                        f"{heredoc} role={role} restarted {restarted!r}, expected {[expected_service]!r}: {result.stderr}",
+                        f"{heredoc} role={role} systemctl calls {restarted!r}, expected {expected_systemctl!r}: {result.stderr}",
                     )
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -1714,6 +1718,8 @@ def assert_static_os_update_service_ordering_contract() -> None:
         (control_planes_source, "terraform_data.control_planes"),
         (agents_source + control_planes_source, "inline=[local.os_update_services_reconcile_script]"),
         (locals_source, "unit_exists transactional-update.timer"),
+        (host_source, "cloud-final.servicefailed;recentdiagnosticsfollow:"),
+        (host_source, "journalctl-ucloud-final.service-n80--no-pager"),
     )
     for source, fragment in required:
         if fragment not in source:
@@ -1788,8 +1794,11 @@ def run_autoscaler_os_upgrade_timer_checks() -> None:
     bash_syntax_check(label, policy_script)
     if "|| true" in policy_script:
         fail(label, "update-policy restoration must not suppress systemd failures")
-    if not policy_script.strip().startswith("(") or not policy_script.strip().endswith(")"):
+    if not policy_script.strip().startswith("("):
         fail(label, "strict shell options must be scoped to the update-policy subshell")
+    for fragment in ('KH_UPDATE_POLICY_STATUS=$?', 'exit "$KH_UPDATE_POLICY_STATUS"'):
+        if fragment not in policy_script:
+            fail(label, f"update-policy restoration does not propagate failure via {fragment!r}")
 
     temp_dir = Path(tempfile.mkdtemp(prefix="kh-update-policy-"))
     try:
@@ -1815,7 +1824,7 @@ exit 0
         env["KH_FAIL_TIMER"] = "1"
         failed = subprocess.run(
             ["bash"],
-            input=policy_script,
+            input=policy_script + "\nprintf 'later command ran\\n'\n",
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -1823,6 +1832,8 @@ exit 0
         )
         if failed.returncode == 0:
             fail(label, "a failed timer restore was silently accepted")
+        if "later command ran" in failed.stdout:
+            fail(label, "a failed timer restore allowed later cloud-init commands to run")
 
         missing_env = env.copy()
         missing_env["KH_FAIL_TIMER"] = "0"
@@ -1905,7 +1916,15 @@ esac
 """,
             encoding="utf-8",
         )
-        (fake_bin / "curl").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (fake_bin / "curl").write_text(
+            """#!/bin/sh
+case "$*" in
+  *--interface*) exit 0 ;;
+esac
+[ "${KH_ROUTE_MODE:-healthy}" = "healthy" ]
+""",
+            encoding="utf-8",
+        )
         (fake_bin / "sleep").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         for path in fake_bin.iterdir():
             path.chmod(0o755)
@@ -1925,6 +1944,10 @@ esac
                 env=env,
             )
             return result, log_path.read_text(encoding="utf-8")
+
+        healthy, healthy_log = simulate("healthy")
+        if healthy.returncode != 0 or healthy_log:
+            fail(label, f"healthy metadata path must not mutate routes; rc={healthy.returncode}, mutations={healthy_log!r}")
 
         direct, direct_log = simulate("stale")
         if direct.returncode != 0:

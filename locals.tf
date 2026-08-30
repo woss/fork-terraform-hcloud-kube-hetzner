@@ -724,6 +724,15 @@ PUBLIC_GW=172.31.1.1
 METADATA_METRIC=100
 DESIRED_ROUTE="$METADATA_IP/32 $PUBLIC_GW $METADATA_METRIC"
 
+# Healthy public nodes need no profile or runtime-route mutation. This also
+# keeps the repair out of the critical bootstrap path when metadata already
+# works through the image's normal network configuration.
+if curl -fsS --connect-timeout 2 --max-time 5 \
+  "http://$METADATA_IP/hetzner/v1/metadata/instance-id" >/dev/null; then
+  echo "Hetzner metadata is already reachable; no route repair needed."
+  exit 0
+fi
+
 # The public gateway is valid only when it is directly connected. A route that
 # contains "via" is an indirect private/default path and must never be treated
 # as proof that this node has public IPv4 connectivity.
@@ -3466,6 +3475,7 @@ restart_or_signal_update() {
     echo "Triggered Kured reboot sentinel at $SENTINEL instead of restarting $SERVICE_NAME"
     return 0
   fi
+  systemctl reset-failed "$SERVICE_NAME" >/dev/null 2>&1 || true
   systemctl restart "$SERVICE_NAME"
 }
 
@@ -3654,6 +3664,7 @@ restart_or_signal_update() {
     echo "Triggered Kured reboot sentinel at $SENTINEL instead of restarting $SERVICE_NAME"
     return 0
   fi
+  systemctl reset-failed "$SERVICE_NAME" >/dev/null 2>&1 || true
   systemctl restart "$SERVICE_NAME"
 }
 
