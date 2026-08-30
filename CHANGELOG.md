@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🚀 New Features
+
+- Added a per-nodepool `delete_protection` option (bool, default `false`) to `agent_nodepools`. When enabled, Hetzner delete and rebuild protection is set on every server in the nodepool, guarding nodes (e.g. those holding database data on local storage) against accidental deletion. Existing clusters are unaffected until the flag is set.
+
 ### 🐛 Bug Fixes
 
 - Fixed K3s agents with floating IPs receiving the server-only `flannel-external-ip` flag, which prevented the agent service from starting. Floating-IP agents continue to advertise `node-external-ip`.
