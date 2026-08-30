@@ -78,6 +78,11 @@ resource "hcloud_server" "server" {
       condition     = alltrue([for firewall_id in local.effective_firewall_ids : firewall_id > 0 && firewall_id == floor(firewall_id)])
       error_message = "Firewall IDs must be positive integers."
     }
+
+    precondition {
+      condition     = length(data.cloudinit_config.config.rendered) <= 32768
+      error_message = "Static node cloud-init user_data exceeds Hetzner Cloud's 32 KiB API limit. Reduce extra_write_files, extra_runcmd, registries_config, kubelet_config, or other embedded node configuration."
+    }
   }
 
 }

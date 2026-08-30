@@ -212,6 +212,11 @@ resource "hcloud_server" "nat_router" {
     replace_triggered_by = [
       terraform_data.nat_router_connection_contract[count.index],
     ]
+
+    precondition {
+      condition     = length(data.cloudinit_config.nat_router_config[count.index].rendered) <= 32768
+      error_message = "NAT router cloud-init user_data exceeds Hetzner Cloud's 32 KiB API limit. Reduce embedded NAT router configuration before creating the router."
+    }
   }
 
 }

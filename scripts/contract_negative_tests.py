@@ -282,8 +282,7 @@ def run_case(case: Case) -> str:
         f"-var-file={BASELINE.name}",
         f"-var-file={case.var_file.name}",
     ]
-    if case.target:
-        command.append(f"-target={case.target}")
+    command.append(f"-target={case.target}")
     result = run(
         command,
         extra_env={"TF_VAR_hcloud_token": plan_env["TF_VAR_hcloud_token"]},

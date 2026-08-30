@@ -21,6 +21,7 @@ LOCALS_TF = REPO_ROOT / "locals.tf"
 AGENTS_TF = REPO_ROOT / "agents.tf"
 VARIABLES_TF = REPO_ROOT / "variables.tf"
 VALIDATION_CONTRACT_TF = REPO_ROOT / "validation-contract.tf"
+HOST_VARIABLES_TF = REPO_ROOT / "modules/host/variables.tf"
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 RENDER_SSH_AUTHORIZED_KEY = (
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKubeHetznerRenderHarness render-comment"
@@ -412,14 +413,18 @@ def assert_hcloud_ssh_key_selector_contract(scratch: "TerraformScratch") -> None
     if missing:
         fail("HCloud SSH key selector", f"missing fail-fast validation fragments: {missing!r}")
 
-    pattern_match = re.search(
-        r"for\s+key\s+in\s+try\(data\.hcloud_ssh_keys\.keys_by_selector\[0\]\.ssh_keys,\s*\[\]\)\s*:\s*"
-        r"can\(regex\(\s*(\"(?:\\.|[^\"\\])*\")",
-        source,
-    )
-    if pattern_match is None:
-        fail("HCloud SSH key selector", "could not extract the production public-key pattern")
-    pattern = json.loads(pattern_match.group(1))
+    patterns: list[str] = []
+    for path in (VARIABLES_TF, VALIDATION_CONTRACT_TF, HOST_VARIABLES_TF):
+        for literal in re.findall(r'"(?:\\.|[^"\\])*"', path.read_text(encoding="utf-8")):
+            decoded = json.loads(literal)
+            if decoded.startswith("^(ssh-(rsa|ed25519)"):
+                patterns.append(decoded)
+    if len(patterns) != 5 or len(set(patterns)) != 1:
+        fail(
+            "HCloud SSH key selector",
+            f"expected five identical root/selector/host key patterns, got {len(patterns)} total and {len(set(patterns))} distinct",
+        )
+    pattern = patterns[0]
 
     valid_keys = (
         "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQValid comment",
@@ -451,7 +456,7 @@ def assert_hcloud_ssh_key_selector_contract(scratch: "TerraformScratch") -> None
 
     print_pass(
         "HCloud SSH key selector",
-        "validates selector-derived keys at plan time with the production key-type contract",
+        "keeps all five HCL key patterns identical and validates selector-derived keys before bootstrap",
     )
 
 
@@ -547,6 +552,33 @@ def assert_autoscaler_user_data_limit_contract() -> None:
     print_pass(
         "autoscaler user-data limit",
         "large autoscaler payloads are compressed and final cloudInit is guarded at 32 KiB",
+    )
+
+
+def assert_static_user_data_limit_contract() -> None:
+    """Keep actionable size checks on every module-created HCloud server."""
+
+    host_source = normalize_hcl((REPO_ROOT / "modules/host/main.tf").read_text(encoding="utf-8"))
+    nat_source = normalize_hcl((REPO_ROOT / "nat-router.tf").read_text(encoding="utf-8"))
+    required = (
+        (
+            "static node",
+            "length(data.cloudinit_config.config.rendered)<=32768",
+            host_source,
+        ),
+        (
+            "NAT router",
+            "length(data.cloudinit_config.nat_router_config[count.index].rendered)<=32768",
+            nat_source,
+        ),
+    )
+    missing = [name for name, fragment, source in required if fragment not in source]
+    if missing:
+        fail("static user-data limit", f"missing pre-server size guards for {missing!r}")
+
+    print_pass(
+        "static user-data limit",
+        "static nodes and NAT routers reject oversized rendered cloud-init before the HCloud server API call",
     )
 
 
@@ -2708,6 +2740,7 @@ def main() -> int:
         assert_hcloud_ssh_key_selector_contract(scratch)
         assert_autoscaler_network_env_contract()
         assert_autoscaler_user_data_limit_contract()
+        assert_static_user_data_limit_contract()
         assert_calico_kustomization_contract()
         assert_secrets_encryption_lifecycle_contract()
         assert_config_update_bootstrap_contract(scratch)

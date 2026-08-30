@@ -53,7 +53,7 @@ variable "ssh_public_key" {
 
   validation {
     condition = can(regex(
-      "^(ssh-(rsa|ed25519)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh.com) [A-Za-z0-9+/=]+( [^\\r\\n]*)?$",
+      "^(ssh-(rsa|ed25519)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh[.]com) [A-Za-z0-9+/=]+( [^\\r\\n]*)?$",
       trimspace(var.ssh_public_key)
     ))
     error_message = "ssh_public_key must be a single-line OpenSSH public key with a supported key type, base64 key body, and optional single-line comment."
@@ -74,7 +74,7 @@ variable "ssh_additional_public_keys" {
     condition = alltrue([
       for key in var.ssh_additional_public_keys :
       trimspace(key) == "" || can(regex(
-        "^(ssh-(rsa|ed25519)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh.com) [A-Za-z0-9+/=]+( [^\\r\\n]*)?$",
+        "^(ssh-(rsa|ed25519)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh[.]com) [A-Za-z0-9+/=]+( [^\\r\\n]*)?$",
         trimspace(key)
       ))
     ])
