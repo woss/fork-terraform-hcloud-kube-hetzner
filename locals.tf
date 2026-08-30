@@ -116,14 +116,27 @@ if [ "$KH_ENCRYPTION_ROLE" = "agent" ]; then
     exit 1
   fi
 else
+  kh_selinux_is_active() {
+    if [ -r /sys/fs/selinux/enforce ] && [ "$(cat /sys/fs/selinux/enforce)" = "1" ]; then
+      return 0
+    fi
+    command -v getenforce >/dev/null 2>&1 && [ "$(getenforce)" != "Disabled" ]
+  }
+
   relabel_kh_encryption_config() {
     CONFIG_PATH="$1"
     if command -v restorecon >/dev/null 2>&1; then
-      restorecon -F "$CONFIG_PATH"
+      if restorecon -F "$CONFIG_PATH"; then
+        return
+      fi
+      if kh_selinux_is_active; then
+        echo "ERROR: SELinux is active but restorecon failed for $CONFIG_PATH." >&2
+        exit 1
+      fi
+      echo "Info: SELinux is disabled and restorecon failed; skipping relabel for $CONFIG_PATH."
       return
     fi
-    if { [ -r /sys/fs/selinux/enforce ] && [ "$(cat /sys/fs/selinux/enforce)" = "1" ]; } || \
-      { command -v getenforce >/dev/null 2>&1 && [ "$(getenforce)" != "Disabled" ]; }; then
+    if kh_selinux_is_active; then
       echo "ERROR: SELinux is active but restorecon is unavailable; cannot install $CONFIG_PATH safely." >&2
       exit 1
     fi
@@ -168,6 +181,41 @@ else
 fi
 cleanup_kh_encryption_stage
 trap - 0 1 2 15
+EOT
+
+  os_update_services_reconcile_script = <<-EOT
+set -eu
+
+unit_exists() {
+  systemctl list-unit-files --no-legend "$1" 2>/dev/null | awk -v unit="$1" '$1 == unit { found = 1 } END { exit !found }'
+}
+
+echo "Restoring transactional boot health checks after Kubernetes provisioning"
+if unit_exists health-checker.service; then
+  systemctl unmask health-checker.service
+  systemctl enable health-checker.service
+  systemctl is-enabled --quiet health-checker.service
+else
+  echo "health-checker.service is not installed in this image; skipping restore"
+fi
+
+if unit_exists transactional-update.timer; then
+  if [ "${var.automatically_upgrade_os}" = "true" ]; then
+    echo "Enabling transactional-update.timer"
+    systemctl enable --now transactional-update.timer
+    systemctl is-enabled --quiet transactional-update.timer
+    systemctl is-active --quiet transactional-update.timer
+  else
+    echo "Disabling transactional-update.timer"
+    systemctl disable --now transactional-update.timer
+    if systemctl is-enabled --quiet transactional-update.timer || systemctl is-active --quiet transactional-update.timer; then
+      echo "ERROR: transactional-update.timer remained enabled or active" >&2
+      exit 1
+    fi
+  fi
+else
+  echo "transactional-update.timer is not installed in this image; skipping update-policy reconciliation"
+fi
 EOT
 
   # k3s endpoint used for agent registration, respects control_plane_endpoint override
@@ -3450,16 +3498,19 @@ fi
 if [ "$CONFIG_CHANGED" = false ]; then
   echo "No k3s configuration update required"
 else
-  if systemctl is-active --quiet k3s || systemctl cat k3s >/dev/null 2>&1; then
-    SERVICE_NAME=k3s
-  elif systemctl is-active --quiet k3s-agent || systemctl cat k3s-agent >/dev/null 2>&1; then
-    SERVICE_NAME=k3s-agent
+  case "$KH_ENCRYPTION_ROLE" in
+    agent) SERVICE_NAME=k3s-agent ;;
+    control-plane) SERVICE_NAME=k3s ;;
+  esac
+
+  if systemctl is-active --quiet "$SERVICE_NAME" || systemctl cat "$SERVICE_NAME" >/dev/null 2>&1; then
+    :
   elif ! command -v k3s >/dev/null 2>&1 && [ ! -x /usr/local/bin/k3s ]; then
     rm -f "$CONFIG_BACKUP"
     echo "Staged k3s configuration for initial installation"
     exit 0
   else
-    echo "ERROR: k3s is installed, but no k3s service unit is available after installing configuration" >&2
+    echo "ERROR: k3s is installed, but the expected $SERVICE_NAME unit is unavailable after installing configuration" >&2
     rollback_k3s_config
     exit 1
   fi
@@ -3635,16 +3686,19 @@ fi
 if [ "$CONFIG_CHANGED" = false ]; then
   echo "No RKE2 configuration update required"
 else
-  if systemctl is-active --quiet rke2-server || systemctl cat rke2-server >/dev/null 2>&1; then
-    SERVICE_NAME=rke2-server
-  elif systemctl is-active --quiet rke2-agent || systemctl cat rke2-agent >/dev/null 2>&1; then
-    SERVICE_NAME=rke2-agent
-  elif ! command -v rke2 >/dev/null 2>&1 && [ ! -x /usr/local/bin/rke2 ] && [ ! -x /var/lib/rancher/rke2/bin/rke2 ]; then
+  case "$KH_ENCRYPTION_ROLE" in
+    agent) SERVICE_NAME=rke2-agent ;;
+    control-plane) SERVICE_NAME=rke2-server ;;
+  esac
+
+  if systemctl is-active --quiet "$SERVICE_NAME" || systemctl cat "$SERVICE_NAME" >/dev/null 2>&1; then
+    :
+  elif ! command -v rke2 >/dev/null 2>&1 && [ ! -x /usr/local/bin/rke2 ] && [ ! -x /var/lib/rancher/rke2/bin/rke2 ] && [ ! -x /opt/rke2/bin/rke2 ]; then
     rm -f "$CONFIG_BACKUP"
     echo "Staged RKE2 configuration for initial installation"
     exit 0
   else
-    echo "ERROR: RKE2 is installed, but no RKE2 service unit is available after installing configuration" >&2
+    echo "ERROR: RKE2 is installed, but the expected $SERVICE_NAME unit is unavailable after installing configuration" >&2
     rollback_rke2_config
     exit 1
   fi

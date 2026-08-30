@@ -126,9 +126,10 @@ preserve_hostname: true
 bootcmd:
   # Leap Micro/MicroOS health-checker can form a systemd ordering cycle with
   # cloud-final. If health-checker wins that race, cloud-final is skipped and
-  # the first-boot Kubernetes bootstrap never runs.
-  - [sh, -c, 'systemctl disable --now health-checker.service 2>/dev/null || true']
-  - [sh, -c, 'systemctl mask health-checker.service 2>/dev/null || true']
+  # the first-boot Kubernetes bootstrap never runs. cloud-init-per keeps this
+  # workaround scoped to the instance's first boot; later reboots must retain
+  # the health-checker restored after Kubernetes provisioning.
+  - [cloud-init-per, instance, kube-hetzner-disable-health-checker, sh, -c, 'systemctl disable --now health-checker.service 2>/dev/null || true; systemctl mask health-checker.service 2>/dev/null || true']
 
 runcmd:
 

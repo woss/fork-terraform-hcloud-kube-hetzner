@@ -109,9 +109,9 @@ preserve_hostname: true
 bootcmd:
   # Leap Micro/MicroOS health-checker can form a systemd ordering cycle with
   # cloud-final. Autoscaler nodes rely on cloud-final for Kubernetes bootstrap,
-  # so mask it before the final cloud-init stage is scheduled.
-  - [sh, -c, 'systemctl disable --now health-checker.service 2>/dev/null || true']
-  - [sh, -c, 'systemctl mask health-checker.service 2>/dev/null || true']
+  # so mask it before the final cloud-init stage is scheduled. Scope the
+  # workaround to first boot so later reboots retain the restored health check.
+  - [cloud-init-per, instance, kube-hetzner-disable-health-checker, sh, -c, 'systemctl disable --now health-checker.service 2>/dev/null || true; systemctl mask health-checker.service 2>/dev/null || true']
 
 runcmd:
 
@@ -382,25 +382,35 @@ ${indent(2, "\n${chomp(tailscale_bootstrap_script)}")}
 # Automatic updates are restored only when requested, and every operation is
 # fail-closed so a node cannot silently join without its configured patching policy.
 - |
-  set -eu
-  systemctl unmask health-checker.service
-  if systemctl list-unit-files --no-legend health-checker.service 2>/dev/null | awk '$1 == "health-checker.service" { found = 1 } END { exit !found }'; then
-    systemctl enable health-checker.service
-    systemctl is-enabled --quiet health-checker.service
-  else
-    echo "health-checker.service is not installed in this image; skipping restore"
-  fi
+  (
+    set -eu
+    unit_exists() {
+      systemctl list-unit-files --no-legend "$1" 2>/dev/null | awk -v unit="$1" '$1 == unit { found = 1 } END { exit !found }'
+    }
+
+    if unit_exists health-checker.service; then
+      systemctl unmask health-checker.service
+      systemctl enable health-checker.service
+      systemctl is-enabled --quiet health-checker.service
+    else
+      echo "health-checker.service is not installed in this image; skipping restore"
+    fi
+    if unit_exists transactional-update.timer; then
 %{if automatically_upgrade_os~}
-  systemctl enable --now transactional-update.timer
-  systemctl is-enabled --quiet transactional-update.timer
-  systemctl is-active --quiet transactional-update.timer
+      systemctl enable --now transactional-update.timer
+      systemctl is-enabled --quiet transactional-update.timer
+      systemctl is-active --quiet transactional-update.timer
 %{else~}
-  systemctl disable --now transactional-update.timer
-  if systemctl is-enabled --quiet transactional-update.timer || systemctl is-active --quiet transactional-update.timer; then
-    echo "ERROR: transactional-update.timer remained enabled or active" >&2
-    exit 1
-  fi
+      systemctl disable --now transactional-update.timer
+      if systemctl is-enabled --quiet transactional-update.timer || systemctl is-active --quiet transactional-update.timer; then
+        echo "ERROR: transactional-update.timer remained enabled or active" >&2
+        exit 1
+      fi
 %{endif~}
+    else
+      echo "transactional-update.timer is not installed in this image; skipping update-policy reconciliation"
+    fi
+  )
 
 # Run the fail-closed metadata repair after Kubernetes and host policy setup so
 # a metadata outage cannot prevent the autoscaler node from joining first.

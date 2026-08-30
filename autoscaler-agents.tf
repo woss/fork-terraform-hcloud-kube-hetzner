@@ -171,6 +171,9 @@ resource "terraform_data" "configure_autoscaler" {
     }
 
     precondition {
+      # cloudInit is the exact base64(gzip(multipart cloud-init)) string passed
+      # through the autoscaler to Hetzner's user_data API field, so its encoded
+      # length is the relevant 32 KiB boundary rather than the decoded payload.
       condition = alltrue(flatten([
         for cluster_config in values(local.desired_cluster_config_by_network) : [
           for node_config in values(cluster_config.nodeConfigs) : length(node_config.cloudInit) <= 32768

@@ -492,62 +492,14 @@ moved {
   to   = terraform_data.zram
 }
 
-# Resource to toggle transactional-update.timer based on automatically_upgrade_os setting
+# Preserve the historical state address. The parent module owns service
+# reconciliation now so it can order the remote action after Kubernetes starts.
 resource "terraform_data" "os_upgrade_toggle" {
   triggers_replace = {
     os_upgrade_state     = var.automatically_upgrade_os ? "enabled" : "disabled"
-    health_checker_state = "enabled-after-bootstrap-v1"
+    health_checker_state = "parent-post-install-v2"
     server_id            = hcloud_server.server.id
   }
-
-  connection {
-    user           = "root"
-    private_key    = var.ssh_private_key
-    agent_identity = local.ssh_agent_identity
-    host           = local.provisioner_connection_host
-    port           = var.ssh_port
-
-    bastion_host        = var.ssh_bastion.bastion_host
-    bastion_port        = var.ssh_bastion.bastion_port
-    bastion_user        = var.ssh_bastion.bastion_user
-    bastion_private_key = var.ssh_bastion.bastion_private_key
-
-  }
-
-  provisioner "remote-exec" {
-    inline = [
-      <<-EOT
-      set -eu
-      echo "Restoring transactional boot health checks after first-boot provisioning"
-      systemctl unmask health-checker.service
-      if systemctl list-unit-files --no-legend health-checker.service 2>/dev/null | awk '$1 == "health-checker.service" { found = 1 } END { exit !found }'; then
-        systemctl enable health-checker.service
-        systemctl is-enabled --quiet health-checker.service
-      else
-        echo "health-checker.service is not installed in this image; skipping restore"
-      fi
-
-      if [ "${var.automatically_upgrade_os}" = "true" ]; then
-        echo "automatically_upgrade_os changed to true, enabling transactional-update.timer"
-        systemctl enable --now transactional-update.timer
-        systemctl is-enabled --quiet transactional-update.timer
-        systemctl is-active --quiet transactional-update.timer
-      else
-        echo "automatically_upgrade_os changed to false, disabling transactional-update.timer"
-        systemctl disable --now transactional-update.timer
-        if systemctl is-enabled --quiet transactional-update.timer || systemctl is-active --quiet transactional-update.timer; then
-          echo "ERROR: transactional-update.timer remained enabled or active" >&2
-          exit 1
-        fi
-      fi
-      EOT
-    ]
-  }
-
-  depends_on = [
-    terraform_data.initial_readiness,
-    terraform_data.registries
-  ]
 }
 
 moved {

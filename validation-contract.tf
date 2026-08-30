@@ -3,6 +3,24 @@
 # referenced variable/local has been evaluated. These are hard preconditions:
 # invalid configurations still fail during plan before any infrastructure is
 # changed.
+resource "terraform_data" "agent_firewall_validation_contract" {
+  input = true
+
+  lifecycle {
+    precondition {
+      condition = alltrue([
+        for agent_nodepool in var.agent_nodepools :
+        length(distinct(concat(var.extra_firewall_ids, agent_nodepool.extra_firewall_ids))) <= 4 &&
+        alltrue([
+          for agent_node in values(coalesce(agent_nodepool.nodes, {})) :
+          length(distinct(concat(var.extra_firewall_ids, agent_nodepool.extra_firewall_ids, agent_node.extra_firewall_ids))) <= 4
+        ])
+      ])
+      error_message = "A public server can attach at most five Hetzner Firewalls. The module-managed firewall uses one slot, so global, nodepool, and node extra_firewall_ids may contain at most four unique IDs in total."
+    }
+  }
+}
+
 resource "terraform_data" "validation_contract" {
   input = true
 
@@ -36,18 +54,6 @@ resource "terraform_data" "validation_contract" {
     precondition {
       condition     = length(local.validation_generated_server_name_errors) == 0
       error_message = join("\n", concat(["Generated Hetzner server names must be 63 characters or fewer."], local.validation_generated_server_name_errors))
-    }
-
-    precondition {
-      condition = alltrue([
-        for agent_nodepool in var.agent_nodepools :
-        length(distinct(concat(var.extra_firewall_ids, agent_nodepool.extra_firewall_ids))) <= 4 &&
-        alltrue([
-          for agent_node in values(coalesce(agent_nodepool.nodes, {})) :
-          length(distinct(concat(var.extra_firewall_ids, agent_nodepool.extra_firewall_ids, agent_node.extra_firewall_ids))) <= 4
-        ])
-      ])
-      error_message = "A public server can attach at most five Hetzner Firewalls. The module-managed firewall uses one slot, so global, nodepool, and node extra_firewall_ids may contain at most four unique IDs in total."
     }
 
     precondition {

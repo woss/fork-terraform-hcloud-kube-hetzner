@@ -813,6 +813,38 @@ moved {
   to   = terraform_data.control_planes
 }
 
+resource "terraform_data" "control_plane_os_update_services" {
+  for_each = local.control_plane_nodes
+
+  triggers_replace = {
+    control_plane_id = module.control_planes[each.key].id
+    os_upgrade_state = var.automatically_upgrade_os ? "enabled" : "disabled"
+    service_policy   = "post-kubernetes-bootstrap-v2"
+  }
+
+  connection {
+    user           = "root"
+    private_key    = var.ssh_private_key
+    agent_identity = local.ssh_agent_identity
+    host           = local.control_plane_ips[each.key]
+    port           = var.ssh_port
+
+    bastion_host        = local.ssh_bastion.bastion_host
+    bastion_port        = local.ssh_bastion.bastion_port
+    bastion_user        = local.ssh_bastion.bastion_user
+    bastion_private_key = local.ssh_bastion.bastion_private_key
+  }
+
+  provisioner "remote-exec" {
+    inline = [local.os_update_services_reconcile_script]
+  }
+
+  depends_on = [
+    terraform_data.control_planes,
+    terraform_data.control_planes_rke2,
+  ]
+}
+
 resource "hcloud_volume" "attached_control_plane_volume" {
   for_each = local.attached_control_plane_volumes
 

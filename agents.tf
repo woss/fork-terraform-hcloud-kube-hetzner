@@ -355,6 +355,35 @@ moved {
   to   = terraform_data.agents
 }
 
+resource "terraform_data" "agent_os_update_services" {
+  for_each = local.agent_nodes
+
+  triggers_replace = {
+    agent_id         = module.agents[each.key].id
+    os_upgrade_state = var.automatically_upgrade_os ? "enabled" : "disabled"
+    service_policy   = "post-kubernetes-bootstrap-v2"
+  }
+
+  connection {
+    user           = "root"
+    private_key    = var.ssh_private_key
+    agent_identity = local.ssh_agent_identity
+    host           = local.agent_ips[each.key]
+    port           = var.ssh_port
+
+    bastion_host        = local.ssh_bastion.bastion_host
+    bastion_port        = local.ssh_bastion.bastion_port
+    bastion_user        = local.ssh_bastion.bastion_user
+    bastion_private_key = local.ssh_bastion.bastion_private_key
+  }
+
+  provisioner "remote-exec" {
+    inline = [local.os_update_services_reconcile_script]
+  }
+
+  depends_on = [terraform_data.agents]
+}
+
 resource "hcloud_volume" "longhorn_volume" {
   for_each = { for k, v in local.agent_nodes : k => v if((v.longhorn_volume_size >= 10) && (v.longhorn_volume_size <= 10240) && var.enable_longhorn) }
 

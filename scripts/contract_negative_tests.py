@@ -81,7 +81,7 @@ CASES = [
     Case(
         name="too-many-agent-firewalls",
         var_file=FIXTURE_DIR / "too-many-agent-firewalls.tfvars.fixture",
-        target="module.sut.terraform_data.validation_contract",
+        target="module.sut.terraform_data.agent_firewall_validation_contract",
         expected_substring="at most five Hetzner Firewalls",
     ),
     Case(
@@ -272,18 +272,20 @@ def init_fixture() -> bool:
 def run_case(case: Case) -> str:
     plan_env = dict(os.environ)
     plan_env["TF_VAR_hcloud_token"] = HCLOUD_TOKEN if TOKEN_MODE else "0" * 64
+    command = [
+        "terraform",
+        "plan",
+        "-input=false",
+        "-lock=false",
+        "-refresh=false",
+        "-no-color",
+        f"-var-file={BASELINE.name}",
+        f"-var-file={case.var_file.name}",
+    ]
+    if case.target:
+        command.append(f"-target={case.target}")
     result = run(
-        [
-            "terraform",
-            "plan",
-            "-input=false",
-            "-lock=false",
-            "-refresh=false",
-            "-no-color",
-            f"-var-file={BASELINE.name}",
-            f"-var-file={case.var_file.name}",
-            f"-target={case.target}",
-        ],
+        command,
         extra_env={"TF_VAR_hcloud_token": plan_env["TF_VAR_hcloud_token"]},
     )
     output = combined_output(result)

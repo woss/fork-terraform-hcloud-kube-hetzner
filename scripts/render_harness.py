@@ -213,12 +213,13 @@ def assert_agent_floating_ip_config_contract() -> None:
         )
 
     locals_source = normalize_hcl(LOCALS_TF.read_text(encoding="utf-8"))
-    for service in ("k3s-agent", "rke2-agent"):
-        if f"systemctlcat{service}>/dev/null2>&1" not in locals_source:
-            fail(
-                "agent floating IP config",
-                f"failed {service} units must be repaired instead of requiring an active service",
-            )
+    for fragment in (
+        "agent)SERVICE_NAME=k3s-agent;;",
+        "agent)SERVICE_NAME=rke2-agent;;",
+        'systemctlcat"$SERVICE_NAME">/dev/null2>&1',
+    ):
+        if fragment not in locals_source:
+            fail("agent floating IP config", f"role-aware service recovery is missing {fragment!r}")
 
     print_pass(
         "agent floating IP config",
@@ -528,8 +529,17 @@ def assert_secrets_encryption_lifecycle_contract() -> None:
         fake_bin = temp_dir / "bin"
         fake_bin.mkdir()
         restorecon = fake_bin / "restorecon"
-        restorecon.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        restorecon.write_text(
+            "#!/bin/sh\n[ \"${KH_RESTORECON_FAIL:-0}\" = 1 ] && exit 1\nexit 0\n",
+            encoding="utf-8",
+        )
         restorecon.chmod(0o755)
+        getenforce = fake_bin / "getenforce"
+        getenforce.write_text(
+            "#!/bin/sh\nprintf '%s\\n' \"${KH_SELINUX_MODE:-Disabled}\"\n",
+            encoding="utf-8",
+        )
+        getenforce.chmod(0o755)
         install = fake_bin / "install"
         install.write_text(
             """#!/bin/sh
@@ -552,10 +562,16 @@ done
         env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
 
         def run_script(
-            *, encryption_requested: bool = True, role: str = "control-plane"
+            *,
+            encryption_requested: bool = True,
+            role: str = "control-plane",
+            restorecon_fails: bool = False,
+            selinux_mode: str = "Disabled",
         ) -> subprocess.CompletedProcess[str]:
             run_env = env.copy()
             run_env["KH_ENCRYPTION_ROLE"] = role
+            run_env["KH_RESTORECON_FAIL"] = "1" if restorecon_fails else "0"
+            run_env["KH_SELINUX_MODE"] = selinux_mode
             return subprocess.run(
                 ["bash"],
                 input=enabled_script if encryption_requested else disabled_script,
@@ -618,6 +634,18 @@ done
         if missing.returncode == 0:
             fail(label, "an enabled configuration accepted a missing installed and staged key")
 
+        (temp_dir / "config.yaml").write_text("token: cluster-token\n", encoding="utf-8")
+        stage.write_text("key: relabel-disabled\n", encoding="utf-8")
+        relabel_disabled = run_script(restorecon_fails=True, selinux_mode="Disabled")
+        if relabel_disabled.returncode != 0 or not destination.exists():
+            fail(label, f"disabled SELinux did not tolerate restorecon failure: {relabel_disabled.stderr}")
+
+        destination.unlink()
+        stage.write_text("key: relabel-enforcing\n", encoding="utf-8")
+        relabel_enforcing = run_script(restorecon_fails=True, selinux_mode="Enforcing")
+        if relabel_enforcing.returncode == 0 or destination.exists() or stage.exists():
+            fail(label, "active SELinux accepted a failed encryption-config relabel")
+
         agents_source = normalize_hcl(AGENTS_TF.read_text(encoding="utf-8"))
         locals_source = normalize_hcl(LOCALS_TF.read_text(encoding="utf-8"))
         if 'inline=["exportKH_ENCRYPTION_ROLE=agent",local.k8s_config_update_script]' not in agents_source:
@@ -635,7 +663,7 @@ done
     )
 
 
-def assert_config_update_bootstrap_contract() -> None:
+def assert_config_update_bootstrap_contract(scratch: TerraformScratch) -> None:
     """Allow config staging before install without hiding broken installations."""
 
     label = "Kubernetes config bootstrap ordering"
@@ -645,14 +673,14 @@ def assert_config_update_bootstrap_contract() -> None:
             "! command -v k3s",
             "[ ! -x /usr/local/bin/k3s ]",
             "Staged k3s configuration for initial installation",
-            "k3s is installed, but no k3s service unit is available",
+            "k3s is installed, but the expected $SERVICE_NAME unit is unavailable",
         ),
         (
             "rke2_config_update_script",
             "! command -v rke2",
             "[ ! -x /usr/local/bin/rke2 ]",
             "Staged RKE2 configuration for initial installation",
-            "RKE2 is installed, but no RKE2 service unit is available",
+            "RKE2 is installed, but the expected $SERVICE_NAME unit is unavailable",
         ),
     )
     for heredoc, command_check, binary_check, staged_message, failure_message in cases:
@@ -662,6 +690,89 @@ def assert_config_update_bootstrap_contract() -> None:
                 fail(label, f"{heredoc} is missing {fragment!r}")
         if script.index(staged_message) > script.index(failure_message):
             fail(label, f"{heredoc} does not check the fresh-install path before failing")
+
+    temp_dir = Path(tempfile.mkdtemp(prefix="kh-config-role-"))
+    try:
+        fake_bin = temp_dir / "bin"
+        fake_bin.mkdir()
+        systemctl_log = temp_dir / "systemctl.log"
+        (fake_bin / "systemctl").write_text(
+            """#!/bin/sh
+set -eu
+case "$1" in
+  is-active) exit 1 ;;
+  cat) exit 0 ;;
+  restart) printf '%s\n' "$2" >> "$KH_SYSTEMCTL_LOG" ;;
+esac
+""",
+            encoding="utf-8",
+        )
+        (fake_bin / "systemctl").chmod(0o755)
+        (fake_bin / "install").write_text(
+            """#!/bin/sh
+set -eu
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o|-g|-m) shift 2 ;;
+    *) break ;;
+  esac
+done
+/usr/bin/install -m 0600 "$1" "$2"
+""",
+            encoding="utf-8",
+        )
+        (fake_bin / "install").chmod(0o755)
+
+        for heredoc, distribution, expected_services in (
+            ("k3s_config_update_script", "k3s", {"agent": "k3s-agent", "control-plane": "k3s"}),
+            (
+                "rke2_config_update_script",
+                "rke2",
+                {"agent": "rke2-agent", "control-plane": "rke2-server"},
+            ),
+        ):
+            rendered = scratch.render_string(scratch.write_template(heredoc, extract_heredoc(heredoc)))
+            source = temp_dir / f"{distribution}-source.yaml"
+            destination = temp_dir / f"{distribution}-config.yaml"
+            encryption_stage = temp_dir / f"{distribution}-encryption-stage.yaml"
+            encryption_dest = temp_dir / f"{distribution}-encryption.yaml"
+            rendered = (
+                rendered.replace("/tmp/config.yaml", str(source))
+                .replace(f"/etc/rancher/{distribution}/config.yaml", str(destination))
+                .replace(
+                    f"mkdir -p /etc/rancher/{distribution}",
+                    f"mkdir -p {temp_dir / distribution}",
+                )
+                .replace("/tmp/kh-render-harness-encryption-stage.yaml", str(encryption_stage))
+                .replace("/tmp/kh-render-harness-encryption.yaml", str(encryption_dest))
+            )
+            bash_syntax_check(f"{heredoc} role selection", rendered)
+            for role, expected_service in expected_services.items():
+                source.write_text("node-label:\n- changed=true\n", encoding="utf-8")
+                destination.write_text("node-label:\n- changed=false\n", encoding="utf-8")
+                systemctl_log.unlink(missing_ok=True)
+                encryption_stage.unlink(missing_ok=True)
+                encryption_dest.unlink(missing_ok=True)
+                env = os.environ.copy()
+                env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+                env["KH_ENCRYPTION_ROLE"] = role
+                env["KH_SYSTEMCTL_LOG"] = str(systemctl_log)
+                result = subprocess.run(
+                    ["bash"],
+                    input=rendered,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=env,
+                )
+                restarted = systemctl_log.read_text(encoding="utf-8").splitlines() if systemctl_log.exists() else []
+                if result.returncode != 0 or restarted != [expected_service]:
+                    fail(
+                        label,
+                        f"{heredoc} role={role} restarted {restarted!r}, expected {[expected_service]!r}: {result.stderr}",
+                    )
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
     print_pass(
         label,
@@ -772,7 +883,21 @@ def assert_kubernetes_artifact_architecture_contract() -> None:
 
 
 def base_render_vars() -> dict[str, Any]:
+    rendered_encryption_install_script = (
+        extract_heredoc("secrets_encryption_install_script")
+        .replace(
+            "${local.secrets_encryption_staging_file}",
+            "/tmp/kh-render-harness-encryption-stage.yaml",
+        )
+        .replace(
+            "${local.secrets_encryption_config_file}",
+            "/tmp/kh-render-harness-encryption.yaml",
+        )
+        .replace("${var.enable_secrets_encryption}", "false")
+        .replace("$${KH_ENCRYPTION_ROLE:-control-plane}", "${KH_ENCRYPTION_ROLE:-control-plane}")
+    )
     var_values = {
+        "automatically_upgrade_os": True,
         "audit_log_path": "/var/log/kubernetes/audit.log",
         "audit_policy_config": "",
         "autoscaler_nodepools": [],
@@ -782,6 +907,7 @@ def base_render_vars() -> dict[str, Any]:
         "cilium_hubble_metrics_enabled": ["dns", "drop", "tcp", "flow", "icmp", "http"],
         "cilium_load_balancer_acceleration_mode": "best-effort",
         "enable_selinux": True,
+        "enable_secrets_encryption": False,
         "enable_hetzner_csi": True,
         "enable_kube_proxy": False,
         "haproxy_additional_proxy_protocol_ips": ["192.0.2.0/24"],
@@ -855,6 +981,9 @@ def base_render_vars() -> dict[str, Any]:
         "multinetwork_transport_ipv4_enabled": False,
         "multinetwork_transport_ipv6_enabled": False,
         "metadata_route_repair_script": extract_heredoc("metadata_route_repair_script"),
+        "secrets_encryption_config_file": "/tmp/kh-render-harness-encryption.yaml",
+        "secrets_encryption_install_script": rendered_encryption_install_script,
+        "secrets_encryption_staging_file": "/tmp/kh-render-harness-encryption-stage.yaml",
         "post_install_readiness_wait_deployment_commands": "true",
         "post_install_readiness_wait_helm_job_commands_300": "true",
         "post_install_readiness_wait_helm_job_commands_900": "true",
@@ -1541,6 +1670,59 @@ def run_autoscaler_standard_node_ip_checks() -> None:
     )
 
 
+def assert_health_checker_first_boot_contract() -> None:
+    label = "health-checker first-boot mask"
+    for template_path in (
+        REPO_ROOT / "modules/host/templates/cloudinit.yaml.tpl",
+        REPO_ROOT / "templates/autoscaler-cloudinit.yaml.tpl",
+    ):
+        _, document = render_cloudinit_with_vars(base_render_vars(), template_path)
+        bootcmd = document.get("bootcmd")
+        if not isinstance(bootcmd, list):
+            fail(label, f"{template_path.relative_to(REPO_ROOT)} bootcmd is not a list")
+        health_entries = [entry for entry in bootcmd if "health-checker.service" in str(entry)]
+        if len(health_entries) != 1:
+            fail(label, f"{template_path.relative_to(REPO_ROOT)} has {len(health_entries)} health-checker boot entries")
+        entry = health_entries[0]
+        if not isinstance(entry, list) or entry[:3] != [
+            "cloud-init-per",
+            "instance",
+            "kube-hetzner-disable-health-checker",
+        ]:
+            fail(label, f"{template_path.relative_to(REPO_ROOT)} mask is not scoped to first boot: {entry!r}")
+        command = " ".join(str(part) for part in entry)
+        for fragment in (
+            "disable --now health-checker.service",
+            "mask health-checker.service",
+        ):
+            if fragment not in command:
+                fail(label, f"{template_path.relative_to(REPO_ROOT)} is missing {fragment!r}")
+    print_pass(label, "static and autoscaler nodes mask health-checker only on first boot")
+
+
+def assert_static_os_update_service_ordering_contract() -> None:
+    label = "static OS update service ordering"
+    agents_source = normalize_hcl(AGENTS_TF.read_text(encoding="utf-8"))
+    control_planes_source = normalize_hcl((REPO_ROOT / "control_planes.tf").read_text(encoding="utf-8"))
+    host_source = normalize_hcl((REPO_ROOT / "modules/host/main.tf").read_text(encoding="utf-8"))
+    locals_source = extract_heredoc("os_update_services_reconcile_script")
+    required = (
+        (agents_source, 'resource"terraform_data""agent_os_update_services"'),
+        (agents_source, "depends_on=[terraform_data.agents]"),
+        (control_planes_source, 'resource"terraform_data""control_plane_os_update_services"'),
+        (control_planes_source, "terraform_data.control_planes_rke2"),
+        (control_planes_source, "terraform_data.control_planes"),
+        (agents_source + control_planes_source, "inline=[local.os_update_services_reconcile_script]"),
+        (locals_source, "unit_exists transactional-update.timer"),
+    )
+    for source, fragment in required:
+        if fragment not in source:
+            fail(label, f"missing post-install ordering fragment {fragment!r}")
+    if "systemctlunmaskhealth-checker.service" in host_source:
+        fail(label, "the child host module still restores update services before Kubernetes bootstrap")
+    print_pass(label, "static service restoration runs only after the root Kubernetes install resources")
+
+
 def run_autoscaler_os_upgrade_timer_checks() -> None:
     label = "autoscaler OS upgrade timer cloud-init"
     timer_command = "systemctl enable --now transactional-update.timer"
@@ -1604,12 +1786,20 @@ def run_autoscaler_os_upgrade_timer_checks() -> None:
     bash_syntax_check(label, policy_script)
     if "|| true" in policy_script:
         fail(label, "update-policy restoration must not suppress systemd failures")
+    if not policy_script.strip().startswith("(") or not policy_script.strip().endswith(")"):
+        fail(label, "strict shell options must be scoped to the update-policy subshell")
 
     temp_dir = Path(tempfile.mkdtemp(prefix="kh-update-policy-"))
     try:
         systemctl = temp_dir / "systemctl"
         systemctl.write_text(
             """#!/bin/sh
+if [ "$1" = "list-unit-files" ]; then
+  if [ "${KH_UNITS_MISSING:-0}" = "0" ]; then
+    printf '%s enabled\n' "$3"
+  fi
+  exit 0
+fi
 if [ "${KH_FAIL_TIMER:-0}" = "1" ] && [ "$*" = "enable --now transactional-update.timer" ]; then
   exit 1
 fi
@@ -1631,6 +1821,20 @@ exit 0
         )
         if failed.returncode == 0:
             fail(label, "a failed timer restore was silently accepted")
+
+        missing_env = env.copy()
+        missing_env["KH_FAIL_TIMER"] = "0"
+        missing_env["KH_UNITS_MISSING"] = "1"
+        missing = subprocess.run(
+            ["bash"],
+            input=policy_script,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=missing_env,
+        )
+        if missing.returncode != 0:
+            fail(label, f"custom snapshots without update units failed: {missing.stderr}")
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -2315,6 +2519,11 @@ users:
 
 
 def run_shell_checks(scratch: TerraformScratch) -> None:
+    required_standalone_scripts = {
+        "k3s_config_update_script",
+        "rke2_config_update_script",
+        "secrets_encryption_install_script",
+    }
     for template_path in sorted((REPO_ROOT / "templates").glob("*.sh.tpl")):
         script = scratch.render_string(template_path)
         bash_syntax_check(str(template_path.relative_to(REPO_ROOT)), script)
@@ -2324,6 +2533,8 @@ def run_shell_checks(scratch: TerraformScratch) -> None:
         try:
             script = scratch.render_string(path)
         except HarnessFailure as exc:
+            if name in required_standalone_scripts:
+                fail(name, f"required standalone render unavailable: {str(exc).splitlines()[0]}")
             print_skip(name, f"standalone render unavailable: {str(exc).splitlines()[0]}")
             continue
         bash_syntax_check(name, script)
@@ -2392,7 +2603,7 @@ def main() -> int:
         assert_autoscaler_user_data_limit_contract()
         assert_calico_kustomization_contract()
         assert_secrets_encryption_lifecycle_contract()
-        assert_config_update_bootstrap_contract()
+        assert_config_update_bootstrap_contract(scratch)
         assert_opensuse_ssh_cloudinit_contract()
         assert_baked_selinux_package_contract()
         assert_kubernetes_artifact_architecture_contract()
@@ -2407,6 +2618,8 @@ def main() -> int:
         run_post_install_readiness_deployment_retry_simulation(post_install_readiness_script)
         run_post_install_readiness_deadline_simulation(post_install_readiness_script)
         run_cloudinit_checks(scratch)
+        assert_health_checker_first_boot_contract()
+        assert_static_os_update_service_ordering_contract()
         run_metadata_route_repair_checks()
         run_node_annotation_cloudinit_checks(scratch)
         run_autoscaler_standard_node_ip_checks()
