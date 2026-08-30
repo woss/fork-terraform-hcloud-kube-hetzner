@@ -44,6 +44,8 @@ class Scenario:
     skip_reason: str | None = None
     ingress_controller: str = "none"
     expect_resource_values: tuple[tuple[str, dict[str, object]], ...] = ()
+    expect_resource_unknown_fields: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    expect_module_input_references: tuple[tuple[str, str, tuple[str, ...]], ...] = ()
 
 
 BASE_CONTROL_PLANE_NODEPOOLS_HCL = """
@@ -257,6 +259,47 @@ def scenarios(external_network_id: str | None) -> list[Scenario]:
             """,
         ),
         Scenario(
+            name="public-agent-extra-firewall-merge-valid",
+            extra_module_hcl="extra_firewall_ids = [101, 102]",
+            expect_success=True,
+            expect_resource_values=(
+                (
+                    'module.kube_hetzner.module.agents["0-7-agent"].hcloud_server.server',
+                    {"public_net": [{"ipv4_enabled": True, "ipv6_enabled": True}]},
+                ),
+            ),
+            expect_resource_unknown_fields=(
+                (
+                    'module.kube_hetzner.module.agents["0-7-agent"].hcloud_server.server',
+                    ("firewall_ids",),
+                ),
+            ),
+            expect_module_input_references=(
+                (
+                    "module.kube_hetzner.module.agents",
+                    "extra_firewall_ids",
+                    ("var.extra_firewall_ids", "each.value.extra_firewall_ids"),
+                ),
+            ),
+            agent_nodepools_hcl="""
+            agent_nodepools = [
+              {
+                name               = "agent"
+                server_type        = "cx23"
+                location           = "nbg1"
+                labels             = []
+                taints             = []
+                extra_firewall_ids = [102, 103]
+                nodes = {
+                  "7" = {
+                    extra_firewall_ids = [101, 104]
+                  }
+                }
+              }
+            ]
+            """,
+        ),
+        Scenario(
             name="public-agent-extra-firewall-budget-invalid",
             extra_module_hcl="",
             expect_success=False,
@@ -302,6 +345,15 @@ def scenarios(external_network_id: str | None) -> list[Scenario]:
             cni_plugin              = "cilium"
             cluster_ipv6_cidr       = "fd00:42::/56"
             service_ipv6_cidr       = "fd00:43::/112"
+            """,
+            expect_success=True,
+        ),
+        Scenario(
+            name="rke2-calico-legacy-values-ignored-valid",
+            extra_module_hcl="""
+            kubernetes_distribution = "rke2"
+            cni_plugin              = "calico"
+            calico_values           = "wireguardEnabled: true"
             """,
             expect_success=True,
         ),
@@ -1046,8 +1098,28 @@ def planned_resources(module: dict[str, object]) -> dict[str, dict[str, object]]
     return resources
 
 
+def configured_module_calls(module: dict[str, object], prefix: str = "") -> dict[str, dict[str, object]]:
+    calls: dict[str, dict[str, object]] = {}
+    module_calls = module.get("module_calls", {})
+    if not isinstance(module_calls, dict):
+        return calls
+    for name, call in module_calls.items():
+        if not isinstance(name, str) or not isinstance(call, dict):
+            continue
+        address = f"{prefix}.module.{name}" if prefix else f"module.{name}"
+        calls[address] = call
+        child_module = call.get("module")
+        if isinstance(child_module, dict):
+            calls.update(configured_module_calls(child_module, address))
+    return calls
+
+
 def assert_planned_values(root: Path, env: dict[str, str], scenario: Scenario) -> str | None:
-    if not scenario.expect_resource_values:
+    if not (
+        scenario.expect_resource_values
+        or scenario.expect_resource_unknown_fields
+        or scenario.expect_module_input_references
+    ):
         return None
     shown = run(["terraform", "show", "-json", "plan.tfplan"], cwd=root, env=env)
     if shown.returncode != 0:
@@ -1055,6 +1127,7 @@ def assert_planned_values(root: Path, env: dict[str, str], scenario: Scenario) -
     try:
         plan = json.loads(shown.stdout)
         root_module = plan["planned_values"]["root_module"]
+        configuration_root = plan["configuration"]["root_module"]
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
         return f"invalid plan JSON: {exc}"
     resources = planned_resources(root_module)
@@ -1069,6 +1142,34 @@ def assert_planned_values(root: Path, env: dict[str, str], scenario: Scenario) -
         }
         if mismatches:
             return f"planned values for {address} did not match: {mismatches}"
+
+    resource_changes = {
+        change["address"]: change.get("change", {}).get("after_unknown", {})
+        for change in plan.get("resource_changes", [])
+        if isinstance(change, dict) and isinstance(change.get("address"), str)
+    }
+    for address, expected_unknown_fields in scenario.expect_resource_unknown_fields:
+        after_unknown = resource_changes.get(address)
+        if not isinstance(after_unknown, dict):
+            return f"resource change {address!r} was not found in plan JSON"
+        missing_unknown = [field for field in expected_unknown_fields if after_unknown.get(field) is not True]
+        if missing_unknown:
+            return f"resource {address} did not retain expected unknown fields: {missing_unknown}"
+
+    module_calls = configured_module_calls(configuration_root)
+    for address, input_name, required_references in scenario.expect_module_input_references:
+        call = module_calls.get(address)
+        if not isinstance(call, dict):
+            return f"configured module call {address!r} was not found in plan JSON"
+        expressions = call.get("expressions", {})
+        expression = expressions.get(input_name, {}) if isinstance(expressions, dict) else {}
+        references = expression.get("references", []) if isinstance(expression, dict) else []
+        missing_references = [reference for reference in required_references if reference not in references]
+        if missing_references:
+            return (
+                f"configured input {address}.{input_name} did not reference {missing_references}; "
+                f"actual references: {references}"
+            )
     return None
 
 
@@ -1141,10 +1242,10 @@ def main() -> int:
                 print(f"FAIL {scenario.name}: missing expected output", flush=True)
                 continue
 
-            plan_value_error = assert_planned_values(root, env, scenario)
-            if plan_value_error:
-                failures.append(f"{scenario.name}: {plan_value_error}")
-                print(f"FAIL {scenario.name}: planned values did not match", flush=True)
+            plan_contract_error = assert_planned_values(root, env, scenario)
+            if plan_contract_error:
+                failures.append(f"{scenario.name}: {plan_contract_error}")
+                print(f"FAIL {scenario.name}: planned contract did not match", flush=True)
                 continue
 
             print(f"PASS {scenario.name}", flush=True)

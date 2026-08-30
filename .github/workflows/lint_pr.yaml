@@ -149,6 +149,7 @@ jobs:
           scripts/tests/test_microos_verifier.sh
           scripts/tests/test_microos_snapshot_selection.sh
           scripts/tests/test_create_distribution.sh
+          scripts/tests/test_authorized_keys_reconcile.sh
           scripts/tests/test_github_release_controls_contract.sh
           scripts/tests/test_packer_security_bundle_install.sh
           scripts/tests/test_release_remote_branch_contract.sh

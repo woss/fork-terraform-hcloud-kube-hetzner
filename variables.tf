@@ -2640,7 +2640,7 @@ variable "calico_values" {
   description = "Replacement strategic-merge patch for the upstream Calico manifest installed by k3s. This input is not consumed by RKE2, which uses its bundled Calico chart."
 
   validation {
-    condition = var.calico_values == "" || try(
+    condition = var.kubernetes_distribution != "k3s" || var.cni_plugin != "calico" || var.calico_values == "" || try(
       trimspace(yamldecode(var.calico_values).apiVersion) != "" &&
       trimspace(yamldecode(var.calico_values).kind) != "" &&
       trimspace(yamldecode(var.calico_values).metadata.name) != "",

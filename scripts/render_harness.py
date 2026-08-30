@@ -474,6 +474,15 @@ def assert_calico_kustomization_contract() -> None:
         fail("Calico kustomization", f"missing k3s-only patch contract: {missing!r}")
     if "ThisinputisnotconsumedbyRKE2" not in variables_source:
         fail("Calico kustomization", "calico_values does not document its k3s-only contract")
+    validation_scope = (
+        'condition=var.kubernetes_distribution!="k3s"||var.cni_plugin!="calico"||'
+        'var.calico_values==""||try('
+    )
+    if validation_scope not in variables_source:
+        fail(
+            "Calico kustomization",
+            "calico_values shape validation must run only when K3s Calico consumes the input",
+        )
     for fragment in (
         "yamldecode(var.calico_values).apiVersion",
         "yamldecode(var.calico_values).kind",
@@ -942,9 +951,94 @@ def assert_baked_selinux_package_contract() -> None:
     ]
     if missing_relabel:
         fail("RKE2 SELinux install-path relabel", f"missing fragments: {missing_relabel!r}")
+
+    temp_dir = Path(tempfile.mkdtemp(prefix="kh-rke2-selinux-relabel-"))
+    try:
+        rke2_binary = temp_dir / "opt" / "rke2" / "bin" / "rke2"
+        rke2_binary.parent.mkdir(parents=True)
+        rke2_binary.touch()
+        executable_script = "set -eu\n" + rke2_post_install.replace(
+            "/opt/rke2/bin/rke2", str(rke2_binary)
+        )
+
+        fake_bin = temp_dir / "bin"
+        fake_bin.mkdir()
+        command_log = temp_dir / "commands.log"
+        fake_commands = {
+            "getenforce": "#!/bin/sh\nprintf '%s\\n' \"${KH_SELINUX_MODE:-Disabled}\"\n",
+            "restorecon": (
+                "#!/bin/sh\n"
+                "printf 'restorecon %s\\n' \"$*\" >> \"$KH_COMMAND_LOG\"\n"
+                "exit \"${KH_RESTORECON_EXIT:-0}\"\n"
+            ),
+            "semanage": (
+                "#!/bin/sh\n"
+                "printf 'semanage %s\\n' \"$*\" >> \"$KH_COMMAND_LOG\"\n"
+                "[ \"${2:-}\" = -a ] && exit 1\n"
+                "exit \"${KH_SEMANAGE_MODIFY_EXIT:-0}\"\n"
+            ),
+            "stat": "#!/bin/sh\nprintf '%s\\n' 'system_u:object_r:container_runtime_exec_t:s0'\n",
+        }
+        for name, source in fake_commands.items():
+            command = fake_bin / name
+            command.write_text(source, encoding="utf-8")
+            command.chmod(0o755)
+
+        base_env = os.environ.copy()
+        base_env["PATH"] = f"{fake_bin}{os.pathsep}{base_env['PATH']}"
+        base_env["KH_COMMAND_LOG"] = str(command_log)
+
+        def run_relabel(
+            *,
+            selinux_mode: str,
+            restorecon_exit: int = 0,
+            semanage_modify_exit: int = 0,
+        ) -> subprocess.CompletedProcess[str]:
+            env = base_env.copy()
+            env["KH_SELINUX_MODE"] = selinux_mode
+            env["KH_RESTORECON_EXIT"] = str(restorecon_exit)
+            env["KH_SEMANAGE_MODIFY_EXIT"] = str(semanage_modify_exit)
+            command_log.write_text("", encoding="utf-8")
+            return subprocess.run(
+                ["bash"],
+                input=executable_script,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+            )
+
+        disabled = run_relabel(
+            selinux_mode="Disabled",
+            restorecon_exit=1,
+            semanage_modify_exit=1,
+        )
+        if disabled.returncode != 0 or "semanage " in command_log.read_text(encoding="utf-8"):
+            fail(
+                "RKE2 SELinux install-path relabel",
+                f"disabled SELinux path was not lenient: {disabled.stderr}",
+            )
+
+        enforcing = run_relabel(selinux_mode="Enforcing")
+        enforcing_log = command_log.read_text(encoding="utf-8")
+        if enforcing.returncode != 0 or "fcontext -a" not in enforcing_log or "fcontext -m" not in enforcing_log:
+            fail(
+                "RKE2 SELinux install-path relabel",
+                f"enforcing SELinux path did not persist and verify the mapping: {enforcing.stderr}",
+            )
+
+        failed_mapping = run_relabel(selinux_mode="Enforcing", semanage_modify_exit=1)
+        if failed_mapping.returncode == 0 or "failed to persist" not in failed_mapping.stderr:
+            fail(
+                "RKE2 SELinux install-path relabel",
+                "enforcing SELinux accepted a failed persistent file-context mapping",
+            )
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
     print_pass(
         "baked SELinux package contract",
-        "k3s and RKE2 require baked policy packages, and /opt RKE2 enters its confined runtime domain",
+        "k3s and RKE2 require baked policy packages, and /opt RKE2 relabeling is strict only under active SELinux",
     )
 
 

@@ -966,15 +966,26 @@ EOT
 if command -v restorecon >/dev/null 2>&1; then
   [ -f /usr/local/bin/rke2 ] && restorecon -v /usr/local/bin/rke2 || true
   if [ -f /opt/rke2/bin/rke2 ]; then
-    if command -v semanage >/dev/null 2>&1; then
-      semanage fcontext -a -t container_runtime_exec_t '/opt/rke2/bin/rke2' 2>/dev/null || \
-        semanage fcontext -m -t container_runtime_exec_t '/opt/rke2/bin/rke2'
-    elif command -v getenforce >/dev/null 2>&1 && [ "$(getenforce)" != "Disabled" ]; then
-      echo "ERROR: semanage is required to confine RKE2 installed under /opt" >&2
+    SELINUX_ACTIVE=false
+    if command -v getenforce >/dev/null 2>&1; then
+      [ "$(getenforce)" = "Disabled" ] || SELINUX_ACTIVE=true
+    elif command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
+      echo "ERROR: SELinux is active but getenforce is unavailable" >&2
       exit 1
     fi
-    restorecon -v /opt/rke2/bin/rke2
-    if command -v getenforce >/dev/null 2>&1 && [ "$(getenforce)" != "Disabled" ]; then
+
+    if [ "$SELINUX_ACTIVE" = true ]; then
+      if ! command -v semanage >/dev/null 2>&1; then
+        echo "ERROR: semanage is required to confine RKE2 installed under /opt" >&2
+        exit 1
+      fi
+      if ! semanage fcontext -a -t container_runtime_exec_t '/opt/rke2/bin/rke2' 2>/dev/null; then
+        if ! semanage fcontext -m -t container_runtime_exec_t '/opt/rke2/bin/rke2'; then
+          echo "ERROR: failed to persist the RKE2 SELinux file-context mapping" >&2
+          exit 1
+        fi
+      fi
+      restorecon -v /opt/rke2/bin/rke2
       RKE2_CONTEXT=$(stat -c '%C' /opt/rke2/bin/rke2 2>/dev/null || true)
       case "$RKE2_CONTEXT" in
         *:container_runtime_exec_t:*) ;;
@@ -983,6 +994,8 @@ if command -v restorecon >/dev/null 2>&1; then
           exit 1
           ;;
       esac
+    else
+      restorecon -v /opt/rke2/bin/rke2 || true
     fi
   fi
   [ -d /var/lib/rancher/rke2 ] && restorecon -RF /var/lib/rancher/rke2 || true
