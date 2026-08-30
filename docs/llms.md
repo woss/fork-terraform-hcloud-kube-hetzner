@@ -3350,6 +3350,8 @@ These variables are part of the current v3 module contract and should be conside
 * **`enable_secrets_encryption` (Boolean, Optional):**
   * **Default:** `false`.
   * **Purpose:** Enables Kubernetes Secrets encryption at rest with an API server EncryptionConfiguration.
+  * **Irreversibility:** Once enabled, preserve the original Terraform state and generated key. The module fails closed if an apply tries to disable encryption or replace that key in place, because either operation can make existing Secrets unreadable.
+  * **Existing Clusters:** Key rotation requires an explicit staged multi-key Kubernetes EncryptionConfiguration procedure; kube-hetzner does not automate that migration as a one-step variable change.
 
 * **`enabled_architectures` (List String, Optional):**
   * **Default:** `["x86", "arm"]`.
