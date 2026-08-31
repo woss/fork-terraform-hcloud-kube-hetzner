@@ -286,7 +286,9 @@ Do not panic-abort a healthy first v3 plan for these expected actions:
   then prints a read-only orphan report for unlabeled primary IPs,
   out-of-state autoscaled nodes, and exact managed LB names. Use
   `scripts/cleanup.sh` only as the forceful fallback after the report shows
-  leftovers or state is already wrecked.
+  leftovers or state is already wrecked. It treats the token's entire HCloud
+  project as cluster-dedicated; review the dry run and include persistent data
+  only deliberately.
 - Autoscaler-created servers are not in Terraform state and can pin
   network/subnet deletion. Delete those orphans only after the control plane is
   dead, or first scale the autoscaler pool to `min_nodes = 0`; deleting them

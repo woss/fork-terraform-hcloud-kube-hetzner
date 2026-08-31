@@ -189,7 +189,9 @@ For destroy/teardown issues, start with `scripts/destroy.sh`, not manual cloud
 deletes. It runs Terraform/OpenTofu destroy, auto-retries only the known benign
 ingress-LB detach race, and then prints a read-only orphan report. Use
 `scripts/cleanup.sh` only as the forceful fallback when state is already wrecked
-or the read-only report identifies leftovers to delete.
+or the read-only report identifies leftovers to delete. It treats the token's
+entire HCloud project as cluster-dedicated; review the dry run and include
+persistent data only deliberately.
 
 Autoscaler-created servers are outside Terraform state. If they pin the network
 during destroy, delete them only after the control plane/Cluster Autoscaler is

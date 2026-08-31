@@ -142,6 +142,7 @@ jobs:
           packer init packer-template/hcloud-microos-snapshots.pkr.hcl
           packer validate -var hcloud_token=ci-validation-placeholder packer-template/hcloud-microos-snapshots.pkr.hcl
           shellcheck --severity=warning packer-template/scripts/*.sh scripts/*.sh scripts/tests/*.sh
+          scripts/tests/test_cleanup.sh
           scripts/tests/test_packer_trust_anchors.sh
           scripts/tests/test_leapmicro_verifier.sh
           scripts/tests/test_leapmicro_transactional_cleanup.sh

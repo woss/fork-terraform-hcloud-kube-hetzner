@@ -282,4 +282,4 @@ ssh -vvv -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 root@<SERVER_IP>
 6. **Volatile overlay trap** — if rescue shows different content than the live system did, it was running on a volatile overlay that never got committed
 7. **After fixing packer, rebuild snapshots** — verify build logs show changes inside the `transactional-update` output
 8. **Rescue mode is non-destructive** — you're just reading/writing files on the disk
-9. **Destroy with the wrapper** — for full-cluster teardown, run `scripts/destroy.sh` from the Terraform root; it retries only the known ingress-LB detach race and prints a read-only orphan report. Use `scripts/cleanup.sh` only as the forceful fallback.
+9. **Destroy with the wrapper** — for full-cluster teardown, run `scripts/destroy.sh` from the Terraform root; it retries only the known ingress-LB detach race and prints a read-only orphan report. Use `scripts/cleanup.sh` only as the forceful fallback; it treats the token's entire HCloud project as cluster-dedicated, so review the dry run first.

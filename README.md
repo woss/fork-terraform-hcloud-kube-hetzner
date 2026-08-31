@@ -141,7 +141,7 @@ Forceful cleanup fallback:
 ```
 
 > [!WARNING]
-> `cleanup.sh` can delete every matching server, network, load balancer, placement group, SSH key, and volume. Review its dry run before confirming.
+> `cleanup.sh` resolves the Terraform HCloud token, activates the matching cluster-named context, and treats that project as dedicated to the cluster. Its dry run includes unrelated runtime resources in the same project; volumes, snapshots, DNS zones, and Storage Boxes require separate opt-in. If Terraform was applied with `-var="hcloud_token=..."`, export that same value as `TF_VAR_hcloud_token` or pass it through `--var-file` before cleanup. Review the plan before typing the cluster name to confirm. `--yes` skips that typed confirmation and is intended only for controlled automation.
 
 <details>
 <summary><strong>Fish shell version</strong></summary>
@@ -156,7 +156,7 @@ set tmp_script (mktemp); curl -fsSL -o "$tmp_script" https://raw.githubuserconte
 <summary><strong>Save as <code>cleanupkh</code> (Bash/Zsh)</strong></summary>
 
 ```sh
-cleanupkh() { (tmp_script=$(mktemp) && trap 'rm -f "$tmp_script"' EXIT && curl -fsSL -o "$tmp_script" https://raw.githubusercontent.com/kube-hetzner/terraform-hcloud-kube-hetzner/master/scripts/cleanup.sh && chmod +x "$tmp_script" && "$tmp_script"); }
+cleanupkh() { (tmp_script=$(mktemp) && trap 'rm -f "$tmp_script"' EXIT && curl -fsSL -o "$tmp_script" https://raw.githubusercontent.com/kube-hetzner/terraform-hcloud-kube-hetzner/master/scripts/cleanup.sh && chmod +x "$tmp_script" && "$tmp_script" "$@"); }
 ```
 
 </details>
