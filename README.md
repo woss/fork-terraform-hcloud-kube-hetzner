@@ -36,7 +36,7 @@ A highly optimized, easy-to-operate Kubernetes cluster powered by k3s or RKE2 on
 - **Plan-time guardrails:** invalid topology and cross-variable combinations fail before infrastructure is created.
 - **Evidence-backed releases:** release claims are tied to live apply, upgrade, health, and destroy evidence in [`docs/v3-release-evidence.md`](docs/v3-release-evidence.md).
 
-**Current release:** [v3.1.0 release notes](https://github.com/kube-hetzner/terraform-hcloud-kube-hetzner/releases/tag/v3.1.0) | [Changelog](CHANGELOG.md) | [v2 to v3 migration](MIGRATION.md)
+**Current release:** [v3.2.0 release notes](https://github.com/kube-hetzner/terraform-hcloud-kube-hetzner/releases/tag/v3.2.0) | [Changelog](CHANGELOG.md) | [3.x upgrade guide](https://github.com/kube-hetzner/terraform-hcloud-kube-hetzner/issues/2232) | [v2 to v3 migration](MIGRATION.md)
 
 ## Quick Start
 

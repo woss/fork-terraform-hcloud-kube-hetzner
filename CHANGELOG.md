@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_No unreleased changes._
+
+---
+
+## [3.2.0] - 2026-08-31
+
 ### ⚠️ Upgrade Notes
 
 - **Force cleanup scope and timeout:** `cleanupkh` now treats the HCloud project selected by the Terraform token as dedicated to one cluster and proposes deleting every runtime resource in that project, including unrelated resources. It defaults to a dry run; persistent data remains opt-in. Existing v3.1.0 K3s and RKE2 clusters also show an expected in-place update to the ingress load balancer destroy-cleanup `terraform_data` on the next apply. That apply must persist the new 45-second SSH timeout before a later destroy can use it.

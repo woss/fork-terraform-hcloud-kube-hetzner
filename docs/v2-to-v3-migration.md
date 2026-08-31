@@ -319,7 +319,7 @@ Pin the module to the target v3 tag:
 ```hcl
 module "kube-hetzner" {
   source  = "kube-hetzner/kube-hetzner/hcloud"
-  version = "3.1.0"
+  version = "3.2.0"
 }
 ```
 
