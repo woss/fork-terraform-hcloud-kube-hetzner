@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No unreleased changes._
+### Added
+
+- **K3s and RKE2 v1.36 channel** - `k3s_channel` and `rke2_channel` now accept `"v1.36"`, so a
+  cluster can follow patch releases of the 1.36 line without pinning an exact release. The
+  reviewed releases and their vetted checksums were already present
+  (`k3s_channel_release_manifest` stable/latest resolve to `v1.36.3+k3s1`, and
+  `rke2_channel_release_manifest` latest to `v1.36.3+rke2r1`); only the channel keys were
+  missing. Defaults are unchanged (`stable`).
 
 ---
 

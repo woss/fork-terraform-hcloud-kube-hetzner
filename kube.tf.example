@@ -1098,8 +1098,8 @@ module "kube-hetzner" {
 
   # Selects stable, latest, or testing. Initial bootstrap uses the exact channel release reviewed
   # with this module version; automated upgrades can continue following the live channel.
-  # v1.33 is accepted for explicit v2 upgrade preservation. For exact Kubernetes minor pinning,
-  # use k3s_version instead of a minor k3s_channel.
+  # v1.33 and v1.36 are accepted for pinning to a Kubernetes minor line, so the System Upgrade
+  # Controller follows patch releases of that minor only. For an exact release, use k3s_version.
   # see https://rancher.com/docs/k3s/latest/en/upgrades/basic/ and https://update.k3s.io/v1-release/channels
   # ⚠️ If you are going to use Rancher addons for instance, it's always a good idea to fix the kube version to one minor version below the latest stable,
   #     e.g. an exact v1.33.x+k3s1 release instead of the current stable channel.
@@ -1905,6 +1905,7 @@ replicas: 3
   # myipv4_ref = "myipv4"
 
   # RKE2 exact version/channel controls. rke2_version wins over rke2_channel.
+  # Accepts stable, latest, testing, or a minor line such as "v1.36".
   # rke2_channel = "stable"
   # rke2_version = ""
   # Optional independent pins for exact versions not reviewed in this module release.

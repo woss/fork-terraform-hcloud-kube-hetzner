@@ -1119,11 +1119,13 @@ EOT
     latest  = "v1.36.3+k3s1"
     testing = "v1.18.2-rc3+k3s1"
     "v1.33" = "v1.33.13+k3s2"
+    "v1.36" = "v1.36.3+k3s1"
   }
   rke2_channel_release_manifest = {
     stable  = "v1.35.7+rke2r1"
     latest  = "v1.36.3+rke2r1"
     testing = "v1.18.9-beta22+rke2"
+    "v1.36" = "v1.36.3+rke2r1"
   }
 
   # Digests were captured from the official GitHub release assets/checksum
