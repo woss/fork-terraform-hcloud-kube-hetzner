@@ -67,12 +67,13 @@ Therefore:
 
 GitHub-generated notes and the changelog expose the people whose work landed since the previous tag. Original PR submitters MUST remain visible — credit where credit is due.
 
-- Upstream requirement (enforced at merge time, see the `review-pr` skill): community contributions keep the contributor as commit **author** in master history. Squash only when merging a contributor-only PR directly; use a merge commit when we pushed fixes on top; cherry-pick with preserved authorship or `Co-authored-by:` trailers only when partially adopting or porting work.
+- Upstream requirement (enforced at merge time, see the `review-pr` skill): merge every accepted community PR's exact head into our isolated integration worktree first, then add maintainer adaptations in separate commits. Promote with merge commits, never squash or rebase, so original authorship and PR identity survive. Partial adoption or porting follows the skill's explicit credit and honest-closure rules.
 - Promotion or major integration PRs, such as the v3 staging-to-master train,
   must merge with a merge commit. Never squash those PRs; squashing erases the
   per-commit community authors that feed repository and release credit.
 - Pre-tag check: `git log <prev-tag>..HEAD --format='%an <%ae>' | sort -u` — every community contributor whose fix is in the release must be listed. If someone is missing, fix history/credit BEFORE tagging (after tagging it is public and immutable).
 - Pre-tag disposition check: every fully accepted community PR must have a non-null `mergedAt`. For PRs integrated indirectly through a release branch, also verify the recorded `headRefOid` is an ancestor of the release target. A closed-but-unmerged accepted PR is a release-process defect; repair the integration before tagging instead of compensating with comments.
+- Pre-tag review check: inspect automated Codex reviews and threads for each original and integration PR, action every finding, and verify the final-head disposition using `review-pr`. Green CI does not substitute for reading review feedback.
 - Post-release check: generated notes and changelog thanks must include the original submitters, not just maintainers. If someone is missing, treat it as a release defect and edit the release body.
 - Changelog entries for community fixes reference their PR/issue numbers so the human credit is also visible in prose.
 

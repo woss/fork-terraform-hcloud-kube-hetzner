@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_No unreleased changes._
+
+---
+
+## [3.2.1] - 2026-09-09
+
 ### ⚠️ Upgrade Notes
 
 - The migration plan auditor now blocks standalone server-network detachment and flags in-place private/public networking changes. A plan with no server replacement is not sufficient proof of IP/MAC preservation, guest routing, or quorum-safe rollout. The underlying v2 attachment migration and existing-cluster NAT transitions still require separate operator review (#2277, #2283).
