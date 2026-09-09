@@ -238,12 +238,34 @@ stop condition, not a warning.
 - State migrations required
 - Resource recreations
 
+Do not silently override this rubric. If the maintainer explicitly authorizes
+a release-train exception, record the normal classification, the authorized
+exception, and its bounded scope in the evidence ledger. An exception does not
+turn a feature into a bug fix or waive compatibility, review, and testing gates.
+
 ## Step 8: MANDATORY - Independent Verification
 
 Before making a final recommendation, re-read every changed line in repository
 context, run the relevant local tests and plans, and obtain an independent
 review from a separate capable reviewer. This gate is mandatory for every PR.
 Reviewer output is not evidence until verified against code and runtime behavior.
+
+### Automated Codex Reviews (MANDATORY)
+
+For every original and integration PR, read automated Codex review summaries,
+inline comments (including outdated ones), and review threads before acceptance.
+Use `gh pr view <num> --comments`, the paginated `pulls/<num>/reviews` and
+`pulls/<num>/comments` API endpoints, and review-thread state as needed; a review
+summary or green CI alone does not establish that there are no findings.
+
+Investigate every finding against the current code. Fix valid findings, rerun
+affected checks, and reply with the concrete correction. For a false positive
+or an explicit maintainer decision, explain the evidence or decision in that
+review thread; never dismiss a finding merely because it came from a bot.
+Resolve a thread only after its disposition is recorded and verified. Recheck
+for new automated findings on the final head immediately before merging, and
+record the reviewed SHA and any outstanding review status. No review yet is
+not a clean review. This does not replace the independent review gate below.
 
 ### Independent Review Contract
 
