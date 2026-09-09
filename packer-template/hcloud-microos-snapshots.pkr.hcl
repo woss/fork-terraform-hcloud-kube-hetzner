@@ -255,8 +255,8 @@ locals {
   # MicroOS publishes rolling aliases. The signed sidecars authenticate the
   # publisher; these separately reviewed exact-byte pins prevent silent alias
   # movement. A publisher refresh therefore fails closed until explicitly reviewed.
-  opensuse_microos_reviewed_x86_sha256          = "015f2b6b2ec1cd9480e372cea97cf4cd8e75869005ff2200b617629532dc05e1"
-  opensuse_microos_reviewed_arm_sha256          = "d3e080c1bff16fc685c1de1c842a0bdf3653637e88514cbfc47c711c44fb9401"
+  opensuse_microos_reviewed_x86_sha256          = "5a6fb33ed982d2b0b79878660790fe2537412e9a3769a7cfcbcca3d23010e353"
+  opensuse_microos_reviewed_arm_sha256          = "1b57c173579b4b42c7cd0b093e5e6876b3b530883d64cd68a98589bd3aaefa27"
   opensuse_microos_x86_expected_sha256_computed = local.opensuse_microos_x86_is_custom ? lower(var.opensuse_microos_x86_expected_sha256) : var.opensuse_microos_x86_expected_sha256 != "" ? lower(var.opensuse_microos_x86_expected_sha256) : local.opensuse_microos_reviewed_x86_sha256
   opensuse_microos_arm_expected_sha256_computed = local.opensuse_microos_arm_is_custom ? lower(var.opensuse_microos_arm_expected_sha256) : var.opensuse_microos_arm_expected_sha256 != "" ? lower(var.opensuse_microos_arm_expected_sha256) : local.opensuse_microos_reviewed_arm_sha256
 
