@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 🐛 Bug Fixes
 
+- Refresh both reviewed MicroOS appliance digests after the publisher rotated its rolling images. Independent signature, artifact-identity and complete-image checks preserve fail-closed verification for new snapshot builds.
 - Allow slow Leap Micro and MicroOS appliance downloads with separate DNS/connect/read timeouts and sanitized failure diagnostics, preserving signatures, digest pins, and mirror authentication safeguards (#2284; thanks @clemlesne).
 - Detect network attachment deletion and in-place server networking risks in saved migration plans, including unknown planned values (#2277, #2283; thanks @robsumoza and @clemlesne).
 - Warn about Cilium datapath migration even when the scanner finds no legacy inputs; add device-versus-route MTU diagnostics without changing runtime MTU defaults (#2286, #2287, #2288; thanks @ChrisKretschmer).
