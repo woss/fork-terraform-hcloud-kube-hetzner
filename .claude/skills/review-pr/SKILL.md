@@ -377,9 +377,8 @@ gh pr review <num> --request-changes --body "Please address: ..."
 # Comment
 gh pr review <num> --comment --body "..."
 
-# Merge (after approval)
-gh pr merge <num> --squash --delete-branch   # default only for contributor-only commits
-# Use --merge for promotion/major integration PRs or any PR with maintainer fixes on top.
+# Promote our reviewed integration PR, never the original PR directly
+gh pr merge <integration-pr> --merge --delete-branch
 ```
 
 ## Preserve Contributor Credit When Merging (SUPER IMPORTANT)
@@ -388,9 +387,9 @@ Original PR submitters must remain visible as commit authors in `master` history
 
 Rules by situation:
 
-1. **PR contains only the contributor's commits and is merged directly through its original GitHub PR** → `--squash` is safe: GitHub sets the squash commit's *author* to the PR author and records that PR as merged. Prefer `--merge` when preserving the contributor's exact commits is useful.
-2. **We pushed fix-up commits on top of their branch** → do NOT squash or rebase-merge. Use a merge commit (`gh pr merge --merge`) so the contributor's exact commits and our separate fixes survive.
-3. **We fully accept a PR through our own integration/release branch** → merge the PR's exact head commit into the integration history. Cherry-picking preserves the `Author:` field but not the original PR identity, so GitHub will not record that PR as merged.
+1. **Every accepted PR, including apparently ready contributions** → merge its exact head into our isolated integration worktree first, never directly into `master`/`main`. Evaluate every change against KH's simplicity, safety, and release scope.
+2. **Maintainer adaptations** → add separate follow-up commits on our integration branch. Fix or rewrite the implementation to fit KH and remove unnecessary changes, including documentation churn. Preserve the original commits; do not squash, rebase, or rewrite contributor history.
+3. **Promotion** → merge our reviewed integration into the release-candidate branch, then promote that train with merge commits. For a single-PR train, promote the integration PR to its declared target. Cherry-picking does not preserve the original PR identity.
 4. **We adopt only part of a PR, supersede it, or port its idea** → cherry-pick the usable original commit(s) first when possible, then add our fixes separately. If no usable commit exists, add an exact `Co-authored-by: Name <email>` trailer and credit the contributor in the commit and changelog. Close the original PR with one honest note; never claim that the PR itself was merged.
 5. **Promotion or major integration PRs** (for example a release-candidate PR carrying multiple community commits) → merge commit only. Never squash or rebase; every accepted community PR head must remain reachable from the final target.
 6. **Never** amend or reauthor a contributor's commit in a way that removes them from the history.
@@ -406,11 +405,11 @@ test "$(gh pr view <num> --json mergedAt --jq .mergedAt)" != "null"
 
 If the applicable checks fail, the integration is incomplete. Do not manually close the PR or tell the contributor it was merged.
 
-## Integrate-and-Fix Flow (DEFAULT for good-but-imperfect PRs)
+## Integrate-and-Fix Flow (MANDATORY for accepted PRs)
 
 When a PR is **good and valuable, even if not perfect**, do NOT bounce it back with change requests and wait for the contributor. The old human-review back-and-forth is dead. We integrate and fix it ourselves:
 
-If maintainer edits are enabled and the PR needs only bounded corrections, add fix-up commits directly to the contributor's branch without force-pushing, test that final head, and merge the original PR with `--merge`. Use the isolated flow below when the contributor branch cannot be updated safely or several PRs must be reconciled in a release train.
+Use our isolated integration branch even when maintainer edits are enabled. Accepting a useful contribution does not mean accepting every change in its diff. Keep only verified, genuinely beneficial changes; make adaptations on top of the original history, then review and test the final result. Do not push adaptations onto the contributor's branch as the default path.
 
 ```bash
 # 1. Record and fetch their exact PR head
@@ -419,7 +418,8 @@ git fetch origin pull/<num>/head:pr-<num>
 test "$(git rev-parse pr-<num>)" = "$pr_head"   # stop if the PR moved
 
 # 2. Create an isolated integration branch from the target or release-candidate train
-git switch -c integrate/pr-<num> origin/<train>
+git worktree add -b codex/integrate-pr-<num> ../kh-pr-<num>-adapt origin/<train>
+cd ../kh-pr-<num>-adapt
 
 # 3. Merge THEIR exact branch first (preserves PR identity, commits, and authorship)
 git merge --no-ff pr-<num> -m "Merge PR #<num> into <train>"
@@ -428,8 +428,8 @@ git merge --no-ff pr-<num> -m "Merge PR #<num> into <train>"
 # 5. Verify: terraform fmt / validate / plan (and the structural plan-diff proxy when relevant)
 
 # 6. Push the integration branch and promote it through a PR with a MERGE COMMIT
-git push -u origin integrate/pr-<num>
-gh pr create --base <train> --head integrate/pr-<num> --title "..." --body "..."
+git push -u origin codex/integrate-pr-<num>
+gh pr create --base <train> --head codex/integrate-pr-<num> --title "..." --body "..."
 gh pr merge <integration-pr> --merge --delete-branch
 ```
 
@@ -437,7 +437,7 @@ Notes:
 - For a single-PR train, `<train>` is the PR's declared target, normally `master`. For a multi-PR release train, merge each isolated integration into the release-candidate branch, then merge the final release-candidate PR into the declared target with `--merge`.
 - Leave every fully accepted original PR open while the release candidate is pending. GitHub marks it **merged** only after its exact head reaches its declared base branch. Reaching a temporary branch alone is not enough.
 - After final promotion, run the ancestry and `mergedAt` gates above for every accepted PR before commenting or preparing the release.
-- Reserve "request changes and wait" for PRs that are: not valuable, architecturally wrong-direction (fixing = rewriting), security-suspect, or from the malicious-pattern category in repo agent guidance. Wrong-direction PRs may still donate salvageable commits via cherry-pick (credit rules case 4).
+- Rewriting an implementation is allowed when the contribution is useful and the result fits KH. Reject unsafe or unsuitable contributions instead of carrying bad changes merely to make GitHub show "merged". If only an idea or isolated commits are adopted, use the partial-adoption credit rule and explain the disposition honestly.
 
 ## One Terminal Contributor Message
 
@@ -447,13 +447,13 @@ Agent reviews, candidate status, test progress, and integration bookkeeping stay
 - **Partially adopted, superseded, or rejected human PR**: use one final `gh pr close --comment "..."` action. State exactly what was adopted, what was not, and why. Say "incorporated" or "credited" rather than "merged" when the original PR did not merge.
 - **Needs contributor input**: one focused question is allowed. Do not add status-only follow-ups; post a final disposition only after new evidence changes the state.
 - **Dependabot and other routine bot PRs**: merge or close silently. Add a concise technical comment only when human maintainers need a non-obvious decision recorded; never post social thanks or release-status updates to a bot.
-- **Idempotency gate**: inspect existing maintainer comments before posting. If a final disposition is already present and still accurate, do not post another.
+- **Idempotency gate**: inspect existing maintainer comments before posting. If a final disposition is already present and still accurate, do not post another. Update our existing status/disposition comment when it needs correction rather than adding a similar second message.
 
 Tone matters: thank human contributors by handle, describe maintainer fixes as building on their work, and be candid about the actual GitHub state. Contributors are volunteers; the message should read as if written specifically to that person.
 
 ## Never Push Unreviewed Integrations Directly to Master
 
-All multi-PR or maintainer-fixed integrations go through an integration branch first:
+All accepted PRs go through an isolated integration branch first:
 
 1. Create an integration branch from the target branch
 2. Test thoroughly
