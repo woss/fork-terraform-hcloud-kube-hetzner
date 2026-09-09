@@ -258,8 +258,42 @@ Before completing ANY issue:
 ## After Completion
 
 1. Create PR referencing the issue
-2. Request review if needed
-3. Close issue with explanation when merged
+2. Complete independent review and action automated Codex findings using `review-pr`
+3. Verify merge and the issue's actual resolution before closing with an explanation
+
+## End-to-End Issue Ownership
+
+For an authorized issue/PR intake, the investigating agent owns follow-through:
+investigation, a fix when justified, tests, useful contributor guidance, and the
+verified GitHub disposition. Reuse that agent for the reply and closure rather
+than having the coordinator post a second generic summary. The coordinator
+owns integration, release gates, and reconciliation of the evidence ledger.
+
+For each issue:
+1. Read the report, every comment, related PRs and earlier attempts; independently
+   check the relevant source and reproduce the failure where practical.
+2. Attempt the smallest safe fix when the cause is established. If no safe fix
+   is ready, record what was tested or ruled out, the remaining failure path,
+   and the exact next experiment or missing evidence. Deferral alone is not work.
+3. Provide concrete, sanitized diagnostics, recovery guidance or a verified
+   workaround where possible. State its limits; never ask someone to risk a
+   working cluster to reproduce a destructive transition.
+4. Record separate states: investigated, reproduced, guidance provided,
+   safeguard/partial fix, full fix, tests performed, merged, released, closed.
+   A proposed design is not an attempted implementation; a tested warning is
+   not a runtime repair; passing generic deploys does not prove that issue's
+   scenario. Report counts and remaining defects explicitly before release.
+5. Close as completed only when the reported problem is resolved. A warning,
+   auditor check or documentation mitigation does not close an underlying
+   runtime defect. Duplicates, support and rejected requests need an honest
+   reason and useful explanation, not a false claim that code was fixed.
+6. Read existing maintainer comments, update the relevant one instead of posting
+   a near-duplicate, thank human contributors naturally, and verify every write
+   and closure by readback. Leave routine bot PRs silent.
+
+Example: blocking unsafe network detachment in a plan auditor is a completed
+safeguard, but the attachment-migration issue stays open until the migration
+itself preserves networking. State both facts in the issue and release report.
 
 ## Community Communication
 
