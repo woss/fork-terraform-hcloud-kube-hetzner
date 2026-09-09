@@ -3046,13 +3046,15 @@ The following variables have been added to the `kube-hetzner` module since the i
     * Simplifies firewall rules and security auditing
     * Automatically forwards Kubernetes API traffic (port 6443) when `control_plane_load_balancer_enable_public_network = false`
   * **Trade-offs:** Introduces a single point of failure for egress traffic
+  * **Redundancy and Capacity:** `enable_redundancy = true` provides active/standby failover, not additional capacity. One router handles all egress routed through the NAT gateway at a time. The module installs one default route to one gateway; [Hetzner network routes](https://registry.terraform.io/providers/hetznercloud/hcloud/latest/docs/resources/network_route) do not allow duplicate destinations for ECMP across the pair. Size `server_type` for peak throughput, packets per second, and connection tracking load on a single router. Include external storage traffic when it uses this egress path; storage reached directly over private networking does not necessarily traverse the NAT router.
+  * **Recovery Behavior:** Both keepalived instances start in `BACKUP` state with `nopreempt`. A recovered higher-priority router does not take over from a healthy active router, so egress remains in the failover location until another failover or an operator-directed switch. Recovery alone does not cause automatic failback, and manually moving it back is not required merely because the original router recovered.
   * **Private Bastion Mode:** Set `use_private_nat_router_bastion = true` to use the NAT router's private IP as the SSH bastion instead of its public IP. This allows hardening the NAT router to be egress-only (no inbound ports on the public IP). Requires the operator to have network-level access to the private network (e.g. via Tailscale, Cloudflare Tunnel, WireGuard).
   * **Configuration:**
     * `server_type`: The Hetzner server type for the NAT router
     * `location`: The location where the NAT router should be deployed
     * `labels`: (Optional) Additional labels for the NAT router
     * `enable_sudo`: (Optional, default: false) Enable sudo access for the nat-router user
-    * `enable_redundancy`: (Optional, default: false) Deploy two NAT routers with keepalived for failover
+    * `enable_redundancy`: (Optional, default: false) Deploy two NAT routers with keepalived for active/standby failover, not load sharing or additional egress capacity
     * `standby_location`: (Optional, default: "") Location for the standby NAT router; required when `enable_redundancy` is true
     * `extra_runcmd`: (Optional, default: []) List of extra shell commands to run as root after the NAT router's cloud-init completes. Terraform reruns these commands when the list changes, so keep them idempotent. Useful for installing additional packages, fetching certificates, or running custom setup scripts.
   * **Port Forwarding:** When the control plane LB has no public interface (`control_plane_load_balancer_enable_public_network = false`), the NAT router automatically configures iptables rules to forward incoming traffic on port 6443 to the control plane LB's private IP. This allows external kubectl access while keeping the control plane LB completely private.
