@@ -53,7 +53,7 @@ Therefore:
 - Do not move `[Unreleased]` to `[vX.Y.Z] - YYYY-MM-DD` before tagging unless you are also bypassing the workflow and manually providing release notes.
 - Do not run `gh release create` during the normal path; the tag workflow owns publication. Use it only after re-running the local integrity gates if publication fails.
 - If Karim asks for a tiny release-prep correction during release, commit it on the release branch, merge it through the protected `master` pull-request path, then tag the resulting merged commit.
-- After a successful release, cut `CHANGELOG.md`: reset `## [Unreleased]` to an empty placeholder and move the released notes under `## [X.Y.Z] - YYYY-MM-DD`. Merge that cleanup through a release-maintenance pull request.
+- After a successful release, cut `CHANGELOG.md`: leave `## [Unreleased]` genuinely empty and move the released notes under `## [X.Y.Z] - YYYY-MM-DD`. Do not insert placeholder text or a separator before the next release heading: either would pass the publication workflow's non-whitespace guard. Merge that cleanup through a release-maintenance pull request.
 - Previous release notes must never remain under `## [Unreleased]`; otherwise the next tag workflow will publish stale notes again.
 - For v3-series releases, verify README's compact "Current release:" link points
   at the latest release tag and `CHANGELOG.md` carries the release content.
@@ -67,12 +67,13 @@ Therefore:
 
 GitHub-generated notes and the changelog expose the people whose work landed since the previous tag. Original PR submitters MUST remain visible — credit where credit is due.
 
-- Upstream requirement (enforced at merge time, see the `review-pr` skill): community contributions keep the contributor as commit **author** in master history. Squash only when merging a contributor-only PR directly; use a merge commit when we pushed fixes on top; cherry-pick with preserved authorship or `Co-authored-by:` trailers only when partially adopting or porting work.
+- Upstream requirement (enforced at merge time, see the `review-pr` skill): merge every accepted community PR's exact head into our isolated integration worktree first, then add maintainer adaptations in separate commits. Promote with merge commits, never squash or rebase, so original authorship and PR identity survive. Partial adoption or porting follows the skill's explicit credit and honest-closure rules.
 - Promotion or major integration PRs, such as the v3 staging-to-master train,
   must merge with a merge commit. Never squash those PRs; squashing erases the
   per-commit community authors that feed repository and release credit.
 - Pre-tag check: `git log <prev-tag>..HEAD --format='%an <%ae>' | sort -u` — every community contributor whose fix is in the release must be listed. If someone is missing, fix history/credit BEFORE tagging (after tagging it is public and immutable).
 - Pre-tag disposition check: every fully accepted community PR must have a non-null `mergedAt`. For PRs integrated indirectly through a release branch, also verify the recorded `headRefOid` is an ancestor of the release target. A closed-but-unmerged accepted PR is a release-process defect; repair the integration before tagging instead of compensating with comments.
+- Pre-tag review check: inspect automated Codex reviews and threads for each original and integration PR, action every finding, and verify the final-head disposition using `review-pr`. Green CI does not substitute for reading review feedback.
 - Post-release check: generated notes and changelog thanks must include the original submitters, not just maintainers. If someone is missing, treat it as a release defect and edit the release body.
 - Changelog entries for community fixes reference their PR/issue numbers so the human credit is also visible in prose.
 
@@ -442,10 +443,6 @@ After confirming the live release, cut the changelog:
 ```markdown
 ## [Unreleased]
 
-_No unreleased changes._
-
----
-
 ## [X.Y.Z] - YYYY-MM-DD
 
 ...released notes...
@@ -464,6 +461,8 @@ Files that may need version updates:
 | `CHANGELOG.md` | Release content must stay under `[Unreleased]` until tag publication runs |
 | `docs/llms.md` | Example version references |
 | `kube.tf.example` | Version in comments |
+| `docs/v2-to-v3-migration.md` | Target module version in the migration example |
+| `.claude/skills/kh-assistant/SKILL.md` | Checked-in current release baseline (still verify live at startup) |
 | `.claude/skills/*/SKILL.md` | Operator workflows, v3 migration names, validation gates |
 | GPT knowledge | meta.version |
 

@@ -10,6 +10,13 @@ args: issue_number
 
 Analyze a GitHub issue, classify it, check for duplicates, and draft an appropriate response.
 
+During an authorized end-to-end intake, do not stop at classification or a
+draft. Follow `fix-issue`'s **End-to-End Issue Ownership** contract: the
+investigating agent advances the issue, provides specific help, and performs
+the verified comment/closure when appropriate. Distinguish investigation,
+partial safeguards and full fixes; unresolved runtime defects remain open.
+For an explicitly triage-only/read-only request, keep mutations out of scope.
+
 ## Usage
 
 ```
