@@ -174,12 +174,14 @@ vulnerabilities, malicious patterns, hidden scope, and unexplained complexity.
 
 ### Test for Breaking Changes
 
-```bash
-# Checkout PR locally
-gh pr checkout <number>
+First follow the mandatory Integrate-and-Fix Flow below. Test the final adapted
+integration tree, not the original PR checked out in the user's working tree.
+Use a designated test root whose module source points to that integration
+worktree; do not switch an active operator test checkout or reuse its state.
 
-# Test against existing cluster
-cd /path/to/kube-test
+```bash
+# Test against a designated existing cluster, when live proof is warranted
+cd <designated-existing-cluster-root>
 terraform init -upgrade
 terraform plan
 ```
