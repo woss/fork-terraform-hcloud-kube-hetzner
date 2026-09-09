@@ -3186,6 +3186,8 @@ additionalTolerations:
 
   hetzner_ccm_values = module.values_merger_hetzner_ccm.values
 
+  # Matching transport peers must send PROXY protocol; this is not optional
+  # forwarded-header trust. Do not automatically add node or CDN networks.
   haproxy_values_default = <<EOT
 controller:
   kind: "Deployment"

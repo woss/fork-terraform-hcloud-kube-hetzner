@@ -43,6 +43,17 @@ the external-network Tailscale plan smoke.
 
 ## Render Harness
 
+For HAProxy transport-peer rendering and native TLS/PROXY protocol regressions:
+
+```bash
+uv run scripts/tests/test_haproxy_proxy_protocol.py
+```
+
+This requires native `haproxy` and `openssl`, plus `terraform`. It uses
+only ephemeral IPv4/IPv6 loopback listeners and generated test certificates,
+not containers or Kubernetes. It checks that adding an exact trusted peer
+accepts PROXY-prefixed TLS but rejects ordinary TLS from the same source.
+
 For hermetic rendered-template checks, run:
 
 ```bash
