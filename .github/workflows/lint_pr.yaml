@@ -98,6 +98,11 @@ jobs:
       - name: Run render harness
         run: python3 scripts/render_harness.py
 
+      - name: Test Kubernetes channel contracts (provider-free)
+        run: |
+          python3 -m pip install python-hcl2==7.3.1
+          python3 scripts/tests/test_kubernetes_channels.py --cli terraform
+
       - name: Run negative contract tests (tokenless)
         run: python3 scripts/contract_negative_tests.py
 
