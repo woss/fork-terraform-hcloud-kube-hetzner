@@ -43,6 +43,16 @@ the external-network Tailscale plan smoke.
 
 ## Render Harness
 
+For offline Cilium migration-warning regressions and the k3s/RKE2,
+kube-proxy, routing and WireGuard render matrix, run:
+
+```bash
+uv run scripts/tests/test_cilium_intake.py
+```
+
+These checks use provider-free Terraform renders. They do not certify live
+MTU behavior or an in-place kube-proxy ownership transition.
+
 For hermetic rendered-template checks, run:
 
 ```bash
