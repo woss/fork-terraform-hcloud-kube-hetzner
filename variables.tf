@@ -114,7 +114,7 @@ variable "microos_arm_snapshot_id" {
 }
 
 variable "ssh_port" {
-  description = "The main SSH port to connect to the nodes."
+  description = "The SSH port configured at node creation and used by Terraform connections. Changing it does not migrate existing node listeners and can interrupt SSH access. See docs/ssh.md#ssh-port-lifecycle before changing it on an existing cluster."
   type        = number
   default     = 22
 
@@ -2218,7 +2218,7 @@ variable "haproxy_requests_memory" {
 variable "haproxy_additional_proxy_protocol_ips" {
   type        = list(string)
   default     = []
-  description = "Additional trusted proxy protocol IPs to pass to haproxy."
+  description = "Additional transport-peer CIDRs required to send PROXY protocol to HAProxy. Use verified peer /32 or /128 addresses, not client or CDN ranges; ordinary HTTP/TLS from matching peers will fail. See docs/haproxy-proxy-protocol.md."
 
   validation {
     condition = alltrue([

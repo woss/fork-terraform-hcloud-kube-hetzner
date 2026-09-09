@@ -27,8 +27,8 @@ require_text 'filebase64("${path.root}/scripts/verify-microos-image.sh")' 'Micro
 require_text 'filebase64("${path.root}/scripts/install-verified-rancher-rpm.sh")' 'verified Rancher RPM installer is not embedded'
 require_text 'filebase64("${path.root}/scripts/verify-rancher-rpm.sh")' 'verified Rancher RPM verifier is not embedded'
 
-require_text '015f2b6b2ec1cd9480e372cea97cf4cd8e75869005ff2200b617629532dc05e1' 'reviewed x86 MicroOS image digest is missing'
-require_text 'd3e080c1bff16fc685c1de1c842a0bdf3653637e88514cbfc47c711c44fb9401' 'reviewed ARM MicroOS image digest is missing'
+require_text '5a6fb33ed982d2b0b79878660790fe2537412e9a3769a7cfcbcca3d23010e353' 'reviewed x86 MicroOS image digest is missing'
+require_text '1b57c173579b4b42c7cd0b093e5e6876b3b530883d64cd68a98589bd3aaefa27' 'reviewed ARM MicroOS image digest is missing'
 require_text 'aaaf5a0632d77db8c5808c6d1097167c934602639d628526c1ec0bd9cb2dd745' 'reviewed k3s-selinux MicroOS RPM digest is missing'
 require_text '0c3b1184293a2f47482d6333aa183b91ed9351889925b55760208a37a1f68a39' 'reviewed rke2-selinux MicroOS RPM digest is missing'
 
@@ -261,9 +261,9 @@ explicit_official_x86_digest="$(printf 'local.opensuse_microos_x86_expected_sha2
   -var "opensuse_microos_x86_mirror_link=$official_x86_url" "$template")"
 explicit_official_arm_digest="$(printf 'local.opensuse_microos_arm_expected_sha256_computed\n' | "$packer_bin" console \
   -var "opensuse_microos_arm_mirror_link=$official_arm_url" "$template")"
-[[ "$explicit_official_x86_digest" == 015f2b6b2ec1cd9480e372cea97cf4cd8e75869005ff2200b617629532dc05e1 ]] \
+[[ "$explicit_official_x86_digest" == 5a6fb33ed982d2b0b79878660790fe2537412e9a3769a7cfcbcca3d23010e353 ]] \
   || fail 'explicit legacy x86 official URL no longer selects official digest mode'
-[[ "$explicit_official_arm_digest" == d3e080c1bff16fc685c1de1c842a0bdf3653637e88514cbfc47c711c44fb9401 ]] \
+[[ "$explicit_official_arm_digest" == 1b57c173579b4b42c7cd0b093e5e6876b3b530883d64cd68a98589bd3aaefa27 ]] \
   || fail 'explicit legacy ARM official URL no longer selects official digest mode'
 
 custom_x86_image_digest=3333333333333333333333333333333333333333333333333333333333333333

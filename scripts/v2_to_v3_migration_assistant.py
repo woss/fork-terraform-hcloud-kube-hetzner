@@ -47,6 +47,7 @@ class PlanRisk:
     action: str
     actions: tuple[str, ...]
     blocker: bool
+    note: str = ""
 
 
 ONE_TO_ONE_RENAMES = {
@@ -162,6 +163,7 @@ CORE_BLOCKER_TYPES = {
     "hcloud_network",
     "hcloud_network_subnet",
     "hcloud_server",
+    "hcloud_server_network",
     "hcloud_load_balancer",
     "hcloud_load_balancer_network",
     "hcloud_primary_ip",
@@ -250,6 +252,21 @@ def collect_topology_warnings(root: Path) -> list[TopologyWarning]:
     warnings: list[TopologyWarning] = []
     for name in sorted(locations):
         warnings.append(TopologyWarning(name, tuple(locations[name]), TOPOLOGY_PATTERNS[name]))
+
+    cni_locations = collect_assignments(root, {"cni_plugin"})
+    if cni_locations:
+        warnings.append(
+            TopologyWarning(
+                "Cilium datapath migration review",
+                tuple(cni_locations["cni_plugin"]),
+                "If this CNI selection resolves to Cilium, review MIGRATION.md's Cilium datapath migration warning. "
+                "v2.21.0 hardcoded kubeProxyReplacement and bpf.masquerade to true; v3 derives both from "
+                "!enable_kube_proxy. Since enable_kube_proxy defaults to true, both Cilium values default to false. Compare effective Helm "
+                "values even with zero v2 input findings. Setting enable_kube_proxy=false on a running cluster "
+                "requires a separately tested transition: k3s agents fetch the setting at startup, and changing "
+                "this input alone does not restart existing agents. This static scanner does not resolve CNI expressions.",
+            )
+        )
 
     shared_subnet_locations = find_regex(
         root,
@@ -342,17 +359,58 @@ def classify_actions(actions: list[str]) -> str | None:
     return None
 
 
+def contains_unknown(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(contains_unknown(item) for item in value.values())
+    if isinstance(value, list):
+        return any(contains_unknown(item) for item in value)
+    return value is True
+
+
+def network_blocks(value: Any) -> list[str]:
+    # Terraform serializes provider sets as arrays; their order is not identity.
+    blocks = []
+    for block in value or []:
+        normalized = dict(block)
+        if isinstance(normalized.get("alias_ips"), list):
+            normalized["alias_ips"] = sorted(normalized["alias_ips"])
+        blocks.append(json.dumps(normalized, sort_keys=True))
+    return sorted(blocks)
+
+
+def server_network_update_note(change: dict[str, Any]) -> str:
+    before = change.get("before") or {}
+    after = change.get("after") or {}
+    unknown = change.get("after_unknown") or {}
+    notes = []
+    for field, note in (
+        ("network", "Private network attachment changes or is unknown; verify IP/MAC preservation and guest interface configuration."),
+        ("public_net", "Public networking changes or is unknown; provider updates can power-cycle the server. Verify persistent guest routing and a quorum-safe rollout before enabling NAT."),
+    ):
+        if contains_unknown(unknown.get(field)) or network_blocks(before.get(field)) != network_blocks(after.get(field)):
+            notes.append(note)
+    return " ".join(notes)
+
+
 def collect_plan_risks(plan_json: Path | None) -> list[PlanRisk]:
     if plan_json is None:
         return []
     data = json.loads(plan_json.read_text())
     risks: list[PlanRisk] = []
     for change in data.get("resource_changes", []):
-        actions = list(change.get("change", {}).get("actions", []))
+        details = change.get("change", {})
+        actions = list(details.get("actions", []))
+        resource_type = str(change.get("type", ""))
         action = classify_actions(actions)
+        note = ""
+        if resource_type == "hcloud_server_network" and action is not None:
+            note = "Detaching an existing server network can change its private IP/MAC and strand the cluster; this is not a harmless state-address cleanup."
+        if resource_type == "hcloud_server" and actions == ["update"]:
+            note = server_network_update_note(details)
+            if note:
+                action = "network-update"
         if action is None:
             continue
-        resource_type = str(change.get("type", ""))
         risks.append(
             PlanRisk(
                 address=str(change.get("address", "")),
@@ -360,6 +418,7 @@ def collect_plan_risks(plan_json: Path | None) -> list[PlanRisk]:
                 action=action,
                 actions=tuple(actions),
                 blocker=resource_type in CORE_BLOCKER_TYPES,
+                note=note,
             )
         )
     return risks
@@ -395,7 +454,8 @@ def markdown_report(
         f"- v2 input findings: {len(findings)}",
         f"- manual-review input findings: {manual_count}",
         f"- topology warnings: {len(warnings)}",
-        f"- destructive plan actions: {len(plan_risks)}",
+        f"- destructive plan actions: {sum('delete' in risk.actions for risk in plan_risks)}",
+        f"- in-place networking plan risks: {sum(risk.action == 'network-update' for risk in plan_risks)}",
         f"- core-resource plan blockers: {blocker_count}",
     ]
 
@@ -438,16 +498,16 @@ def markdown_report(
     elif plan_risks:
         lines.append(f"Plan JSON: `{plan_json}`")
         lines.append("")
-        lines.append("| address | type | action | blocker |")
-        lines.append("| --- | --- | --- | --- |")
+        lines.append("| address | type | action | blocker | note |")
+        lines.append("| --- | --- | --- | --- | --- |")
         for risk in plan_risks:
             lines.append(
-                f"| `{risk.address}` | `{risk.resource_type}` | `{','.join(risk.actions)}` | {str(risk.blocker).lower()} |"
+                f"| `{risk.address}` | `{risk.resource_type}` | `{','.join(risk.actions)}` | {str(risk.blocker).lower()} | {risk.note} |"
             )
     else:
         lines.append(f"Plan JSON: `{plan_json}`")
         lines.append("")
-        lines.append("No delete/replace actions were found in the plan JSON.")
+        lines.append("No delete/replace actions or in-place server networking risks were found in the plan JSON. This is not proof of guest routing, interface readiness, or rolling-upgrade safety.")
 
     lines.extend(["", "## Recommendation"])
     if blocker_count:
@@ -481,7 +541,8 @@ def json_report(
                 1 for finding in findings if finding.action in {"invert", "reshape", "remove"}
             ),
             "topology_warnings": len(warnings),
-            "destructive_plan_actions": len(plan_risks),
+            "destructive_plan_actions": sum("delete" in risk.actions for risk in plan_risks),
+            "in_place_networking_plan_risks": sum(risk.action == "network-update" for risk in plan_risks),
             "core_resource_plan_blockers": sum(1 for risk in plan_risks if risk.blocker),
         },
     }

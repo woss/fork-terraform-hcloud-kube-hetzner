@@ -7,7 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No unreleased changes._
+### ⚠️ Upgrade Notes
+
+- The migration plan auditor now blocks standalone server-network detachment and flags in-place private/public networking changes. A plan with no server replacement is not sufficient proof of IP/MAC preservation, guest routing, or quorum-safe rollout. The underlying v2 attachment migration and existing-cluster NAT transitions still require separate operator review (#2277, #2283).
+- Cilium users migrating from v2 must compare effective kube-proxy replacement, BPF masquerading, and tunnel settings. Unchanged inputs can change those settings in v3; changing `enable_kube_proxy` alone does not restart existing K3s agents. Current v3 defaults are unchanged (#2287, #2288).
+
+### 🐛 Bug Fixes
+
+- Refresh both reviewed MicroOS appliance digests after the publisher rotated its rolling images. Independent signature, artifact-identity and complete-image checks preserve fail-closed verification for new snapshot builds.
+- Allow slow Leap Micro and MicroOS appliance downloads with separate DNS/connect/read timeouts and sanitized failure diagnostics, preserving signatures, digest pins, and mirror authentication safeguards (#2284; thanks @clemlesne).
+- Detect network attachment deletion and in-place server networking risks in saved migration plans, including unknown planned values (#2277, #2283; thanks @robsumoza and @clemlesne).
+- Warn about Cilium datapath migration even when the scanner finds no legacy inputs; add device-versus-route MTU diagnostics without changing runtime MTU defaults (#2286, #2287, #2288; thanks @ChrisKretschmer).
+
+### 📚 Documentation
+
+- Clarify HAProxy's required PROXY-protocol transport peers and replace misleading CDN-range examples with exact-peer diagnostics. Trusted networks and ingress defaults are unchanged (#2288; thanks @ChrisKretschmer).
+- Warn that changing `ssh_port` alone does not migrate existing listeners and may interrupt management access; document recovery limits for mixed fleets and NAT routers (#2285; thanks @clemlesne).
+- Clarify that NAT redundancy provides active/standby failover, not additional egress capacity, and explain `nopreempt` recovery behavior (#2281; thanks @clemlesne).
 
 ---
 

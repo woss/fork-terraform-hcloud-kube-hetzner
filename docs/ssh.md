@@ -25,6 +25,45 @@ Then set `private_key = null` in your kube.tf file, as it will be read from the 
 
 ---
 
+## SSH port lifecycle
+
+Choose `ssh_port` before creating nodes. It configures sshd and the SELinux
+custom-port label through first-boot cloud-init. Existing static nodes ignore
+changes to that cloud-init data, while Terraform's SSH connections and the
+managed firewall rule use the newly configured port. Changing the variable
+alone is **not an in-place SSH-port migration**: it can remove public SSH access
+or fail partway through an apply. Extra firewall rules or private/overlay access
+may preserve an old-port path; do not assume every path is lost or still usable.
+
+The NAT router is not an exception that safely migrates in place: changing its
+SSH connection contract triggers router replacement. This does not migrate
+existing control-plane or agent listeners behind it. Existing autoscaler nodes
+also keep their old configuration; nodes created after an updated autoscaler
+configuration is deployed can use the new port, leaving a mixed-port fleet.
+
+If you changed the port unintentionally:
+
+1. Restore the original `ssh_port` value in your Terraform configuration and
+   generate and review a fresh plan. Do not reuse a plan saved with the new port.
+2. Check that the planned firewall rule matches the port the affected nodes
+   still listen on, retaining the intended source CIDRs. Review all other
+   actions, especially NAT-router replacements and partially completed changes,
+   before deciding whether to apply. If planning fails on SSH-dependent work,
+   stop and use a separately verified management/recovery path; do not force a
+   full apply or blindly edit state.
+3. Inventory nodes created or manually changed while the new value was active,
+   including autoscaled nodes. Restoring the old rule may help unchanged nodes
+   but can strand new-port nodes. Verify reachability per node; **restoring the
+   variable does not automatically recover every node**.
+
+An intentional migration requires coordinated old/new firewall allowances and
+listeners, persistent SELinux configuration, verification on the new port,
+rollback, and coverage of NAT bastions and autoscaled nodes before retiring
+the old port. Do not remove the server `user_data` lifecycle ignore or replay
+arbitrary cloud-init commands as a shortcut. This warning mitigates the risk;
+it does not resolve the migration defect tracked in
+[#2285](https://github.com/mysticaltech/terraform-hcloud-kube-hetzner/issues/2285).
+
 ## Firewall SSH source and changing IPs
 
 SSH access is controlled by the Hetzner Cloud firewall, and the module configures it via the `firewall_ssh_source` input. This is a list of CIDR blocks that are allowed to connect to the nodes over SSH (for a single IPv4 address, use a `/32`, for IPv6 a `/128`).

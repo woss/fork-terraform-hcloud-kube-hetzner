@@ -115,6 +115,31 @@ first. For subnet replacements, start with the
 the hard no-destroy floor; still review every non-protected resource action in
 the full plan.
 
+#### Network and SSH transition limits
+
+A plan with no server replacements is not sufficient evidence of a safe
+network upgrade. Stop on deletion of a standalone `hcloud_server_network`
+attachment, changed or unknown inline server `network` values, or changed or
+unknown `public_net` values until there is a verified migration procedure.
+Private IP/MAC changes can disrupt node identity and interface naming; a
+public-network update can power-cycle a node even when Terraform calls it an
+in-place update. Pinning the old IP alone does not prevent an attachment delete.
+
+Review the saved plan with the migration assistant's `--strict` option as well
+as the no-destroy gate, and inspect network changes manually. Neither a clean
+auditor report nor `-parallelism=1` proves guest routing or quorum-safe rolling
+sequencing. Current cloud-init repairs are not automatically installed on
+existing guests. Enabling NAT on existing nodes needs verification of persistent
+routes, egress and management access before and after public addresses are
+removed; an existing fallback route may preserve egress, but is not guaranteed.
+Preserve current addresses and require guest-level acceptance and rollback
+before applying these transitions. See the
+[saved-plan review procedure](docs/v2-to-v3-migration.md#phase-6-create-and-inspect-a-plan).
+
+Keep the existing `ssh_port` during a module upgrade. Changing it does not
+migrate existing listeners and can interrupt management access; see
+[SSH port lifecycle and recovery](docs/ssh.md#ssh-port-lifecycle).
+
 #### Compatibility freeze table
 
 | Concern | v3 default | To freeze v2 behavior |
@@ -122,12 +147,43 @@ the full plan.
 | k3s channel | `k3s_channel = "stable"`, `k3s_version = ""`, and `automatically_upgrade_kubernetes = true`. | Before the first v3 apply, set `k3s_channel = "v1.33"` to keep the v2 minor channel, or set an exact `k3s_version`. |
 | Addon versions | `hetzner_ccm_version`, `hetzner_csi_version`, `traefik_version`, `nginx_version`, `haproxy_version`, `longhorn_version`, `csi_driver_smb_version`, `cert_manager_version`, `rancher_version`, `kured_version`, and `calico_version` default to `null`, which uses the reviewed module matrix. `latest` is opt-in where supported. Concrete defaults also exist for `cilium_version = "1.19.3"`, `cluster_autoscaler_version = "v1.33.3"`, and `system_upgrade_controller_version = "v0.18.0"`. | Set concrete version variables for addons that must stay exactly where they are; do not set `latest` or legacy `*` unless floating upstream behavior is intentional. |
 | Gateway API CRDs | `gateway_api_version = ""` derives the CRD bundle from `cilium_version` when Gateway API is enabled. | Set `gateway_api_version` to a concrete release tag if you previously pinned Gateway API independently. |
+| Cilium datapath | `enable_kube_proxy = true` renders `kubeProxyReplacement: false` and `bpf.masquerade: false`. | v2.21.0 hardcoded both Cilium values to `true`, even when kube-proxy was enabled. Setting `enable_kube_proxy = false` is not a no-disruption freeze of that hybrid configuration. Review the [Cilium migration warning](#cilium-datapath-migration) before changing `enable_kube_proxy`. |
 | Network subnet layout | `network_subnet_mode = "per_nodepool"`, matching the v2-compatible layout. | Leave it unset or set `network_subnet_mode = "per_nodepool"`; never switch to `shared` during an in-place upgrade unless subnet changes are intentional. |
 | Node transport | `node_transport_mode = "hetzner_private"`, the v2-style Hetzner private Network transport. | Leave it unset or set `node_transport_mode = "hetzner_private"`; introduce `tailscale` only in a separate reviewed plan or blue/green migration. |
 | OS selection | Existing nodepool OS labels are preserved when known; existing unlabeled/mixed v2 nodepools fall back to MicroOS; brand-new nodepools default to Leap Micro. | Existing MicroOS nodes stay MicroOS when servers are not recreated. For new MicroOS pools, set `os = "microos"` on `control_plane_nodepools`, `agent_nodepools`, `autoscaler_nodepools`, or per-node `nodes[*]` entries. |
 | SSH authorized keys | `ssh_authorized_keys_exclusive = false`; unknown out-of-band root keys are preserved while removed module-managed keys are revoked. | Leave `ssh_authorized_keys_exclusive = false` to preserve the v3 upgrade-safe behavior. Set `true` only when strict replacement with exactly module-managed keys is intended. |
 | SELinux | `enable_selinux = true`; nodepool and node `selinux` options default to `true`. | Keep `enable_selinux = true` and per-pool `selinux = true` for the v2 default. If v2 used `disable_selinux = true`, invert that deliberately to `enable_selinux = false` or per-pool `selinux = false`. |
 | Kubernetes config update restarts | `kubernetes_config_updates_use_kured_sentinel = false`, so changed k3s/RKE2 config restarts the relevant service immediately. | Carry forward the old `k8s_config_updates_use_kured_sentinel` intent under the new name `kubernetes_config_updates_use_kured_sentinel`. |
+
+#### Cilium datapath migration
+
+The v2.21.0 Cilium template enabled kube-proxy replacement and BPF masquerading
+independently of k3s's kube-proxy setting. In v3 both follow
+`!enable_kube_proxy`; the default therefore changes the effective Cilium
+datapath even when no input is renamed. Do not flip the v3 default back on
+existing clusters as a patch upgrade. With tunnel routing and WireGuard,
+v3 also explicitly selects Geneve, whereas v2.21.0 left the tunnel protocol
+to the chart default. See [Cilium diagnostics](docs/cilium-upgrades.md).
+
+`enable_kube_proxy = false` requests Cilium replacement; it is not a safe
+one-step migration recipe for an already-running cluster. K3s agents obtain
+the disable setting from the server at startup, not from an agent CLI flag.
+Changing this input alone does not change the module's static-agent config
+hash or restart those agents. Existing kube-proxy processes can remain on
+port 10256 while Cilium starts its replacement health listener. A Kured
+sentinel can also defer the control-plane config restart. Do not add the
+server-only `disable-kube-proxy` flag to agent arguments or suppress the
+Cilium listener as a substitute for coordinating the transition. Keep such
+transitions in a separately tested maintenance procedure or use blue/green.
+
+Before the first v3 apply, privately capture deployed Cilium Helm values and
+compare them with the intended v3 values, including custom values/merges.
+After apply, compare the deployed values again and verify the actual
+kube-proxy, masquerading and tunnel modes on every node. Zero migration
+assistant input findings and a clean infrastructure replacement gate do not
+prove datapath equivalence: sensitive Helm trigger values can hide the
+value-level diff in human-readable plans. Do not publish full values, state,
+or plan JSON without reviewing them for secrets.
 
 #### Rollback and abort paths
 
@@ -176,6 +232,8 @@ Before applying a v3 plan:
 - Remove every v2-only input and review every renamed/inverted boolean.
 - Review addon version intent: unset variables follow kube-hetzner's reviewed
   deterministic matrix; `latest` opts into upstream floating behavior.
+- For Cilium, review the [datapath migration warning](#cilium-datapath-migration)
+  and compare effective Helm values; zero input findings is not a datapath check.
 - Run `terraform fmt -recursive`, `terraform init -upgrade`, and
   `terraform validate`.
 - Save and inspect a plan with `terraform plan -out=v3-upgrade.tfplan`.

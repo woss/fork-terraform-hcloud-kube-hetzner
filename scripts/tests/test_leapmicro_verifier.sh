@@ -39,7 +39,7 @@ while (($#)); do
       input_file="${1#*=}"
       shift
       ;;
-    --timeout=* | --waitretry=* | --tries=* | --retry-connrefused | --inet4-only | -q)
+    --dns-timeout=* | --connect-timeout=* | --read-timeout=* | --waitretry=* | --tries=* | --retry-connrefused | --inet4-only | -q)
       shift
       ;;
     -* )

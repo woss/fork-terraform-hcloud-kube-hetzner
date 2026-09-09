@@ -125,7 +125,8 @@ module "kube-hetzner" {
     * This is a deliberate design choice to prevent accidental data loss or full cluster rebuilds for minor changes to sensitive, foundational attributes.
 
 ```terraform
-  # Customize the SSH port (by default 22)
+  # Customize the SSH port before creating nodes (by default 22).
+  # Changing this later is not an in-place SSH-port migration.
   # ssh_port = 2222
 ```
 
@@ -134,6 +135,7 @@ module "kube-hetzner" {
   * **Purpose:** Allows you to specify a custom SSH port for the nodes created by the module. The module will configure the SSH daemon on the nodes to listen on this port and adjust firewall rules accordingly.
   * **Use Case:** Security through obscurity (minor benefit) or if port 22 is blocked/used by something else in your environment.
   * **Implication:** You'll need to specify this custom port when SSHing into the nodes (e.g., `ssh -p 2222 user@node_ip`).
+  * **Existing clusters:** Changing `ssh_port` updates Terraform's connection settings and the managed firewall rule, but does not migrate sshd or its SELinux port configuration on existing nodes. It can interrupt SSH access or fail partway through an apply. NAT routers can be replaced, and existing/new autoscaler nodes can retain different ports. Read [SSH port lifecycle and recovery](ssh.md#ssh-port-lifecycle) before changing it; restoring the original configured port and reviewing a fresh plan is a recovery starting point, not a guarantee that every node recovers.
 
 ```terraform
   # * Your ssh public key
@@ -2840,17 +2842,17 @@ controller:
   * Pins the HAProxy Ingress *Helm chart version*.
 
 ```terraform
-  # If you want to configure additional proxy protocol trusted IPs for haproxy, enter them here as a list of IPs (strings).
-  # Example for Cloudflare:
+  # Verified transport peers that MUST send PROXY protocol. Replace placeholders.
   # haproxy_additional_proxy_protocol_ips = [
-  #   "173.245.48.0/20",
-  #   // ... more Cloudflare IP ranges ...
+  #   "203.0.113.10/32",
+  #   "2001:db8::10/128"
   # ]
 ```
 
 * **`haproxy_additional_proxy_protocol_ips` (List of Strings, Optional, specific to `ingress_controller = "haproxy"`):**
-  * **Purpose:** Similar to `traefik_additional_trusted_ips`, this configures trusted source IPs for PROXY protocol when using HAProxy Ingress. If HAProxy receives PROXY protocol headers from these IPs, it will trust the client IP information within.
-  * **Use Case:** When HAProxy is behind another proxy (like Cloudflare or the Hetzner LB using PROXY protocol).
+  * **Purpose:** Adds transport-peer CIDRs from which HAProxy requires a PROXY protocol preamble and accepts its client address. This is not forwarded HTTP header trust: ordinary HTTP/TLS from a listed peer fails.
+  * **Default:** `[]`; the non-Klipper default values already include `127.0.0.1/32` and `10.0.0.0/8`.
+  * **Use Case:** A verified load-balancer or SNAT peer outside the defaults. Prefer exact `/32` or `/128` peers, not original client or CDN ranges. Check both PROXY and ordinary traffic before adding a peer. See [HAProxy PROXY protocol](haproxy-proxy-protocol.md).
 
 ```terraform
   # Configure CPU and memory requests for each HAProxy pod
@@ -3046,13 +3048,15 @@ The following variables have been added to the `kube-hetzner` module since the i
     * Simplifies firewall rules and security auditing
     * Automatically forwards Kubernetes API traffic (port 6443) when `control_plane_load_balancer_enable_public_network = false`
   * **Trade-offs:** Introduces a single point of failure for egress traffic
+  * **Redundancy and Capacity:** `enable_redundancy = true` provides active/standby failover, not additional capacity. One router handles all egress routed through the NAT gateway at a time. The module installs one default route to one gateway; [Hetzner network routes](https://registry.terraform.io/providers/hetznercloud/hcloud/latest/docs/resources/network_route) do not allow duplicate destinations for ECMP across the pair. Size `server_type` for peak throughput, packets per second, and connection tracking load on a single router. Include external storage traffic when it uses this egress path; storage reached directly over private networking does not necessarily traverse the NAT router.
+  * **Recovery Behavior:** Both keepalived instances start in `BACKUP` state with `nopreempt`. A recovered higher-priority router does not take over from a healthy active router, so egress remains in the failover location until another failover or an operator-directed switch. Recovery alone does not cause automatic failback, and manually moving it back is not required merely because the original router recovered.
   * **Private Bastion Mode:** Set `use_private_nat_router_bastion = true` to use the NAT router's private IP as the SSH bastion instead of its public IP. This allows hardening the NAT router to be egress-only (no inbound ports on the public IP). Requires the operator to have network-level access to the private network (e.g. via Tailscale, Cloudflare Tunnel, WireGuard).
   * **Configuration:**
     * `server_type`: The Hetzner server type for the NAT router
     * `location`: The location where the NAT router should be deployed
     * `labels`: (Optional) Additional labels for the NAT router
     * `enable_sudo`: (Optional, default: false) Enable sudo access for the nat-router user
-    * `enable_redundancy`: (Optional, default: false) Deploy two NAT routers with keepalived for failover
+    * `enable_redundancy`: (Optional, default: false) Deploy two NAT routers with keepalived for active/standby failover, not load sharing or additional egress capacity
     * `standby_location`: (Optional, default: "") Location for the standby NAT router; required when `enable_redundancy` is true
     * `extra_runcmd`: (Optional, default: []) List of extra shell commands to run as root after the NAT router's cloud-init completes. Terraform reruns these commands when the list changes, so keep them idempotent. Useful for installing additional packages, fetching certificates, or running custom setup scripts.
   * **Port Forwarding:** When the control plane LB has no public interface (`control_plane_load_balancer_enable_public_network = false`), the NAT router automatically configures iptables rules to forward incoming traffic on port 6443 to the control plane LB's private IP. This allows external kubectl access while keeping the control plane LB completely private.
@@ -3305,7 +3309,8 @@ Each of these `*_values` variables:
   # EOT
   
   # Custom HAProxy configuration
-  # haproxy_additional_proxy_protocol_ips = ["10.0.0.0/8", "172.16.0.0/12"]
+  # Verified PROXY transport peer only; replace this placeholder.
+  # haproxy_additional_proxy_protocol_ips = ["203.0.113.10/32"]
   # haproxy_requests_cpu = "250m"
   # haproxy_requests_memory = "256Mi"
   # haproxy_values = <<-EOT
@@ -3324,8 +3329,8 @@ Each of these `*_values` variables:
   * **Format:** YAML heredoc string
 
 * **`haproxy_additional_proxy_protocol_ips` (List of Strings, Optional):**
-  * **Purpose:** Additional trusted IPs for HAProxy proxy protocol
-  * **Default:** Includes common private ranges
+  * **Purpose:** Additional transport-peer CIDRs required to send PROXY protocol; ordinary HTTP/TLS from matching peers fails.
+  * **Default:** `[]`; non-Klipper rendered defaults include `127.0.0.1/32` and `10.0.0.0/8`. See [HAProxy PROXY protocol](haproxy-proxy-protocol.md).
 
 * **`haproxy_requests_cpu` / `haproxy_requests_memory` (String, Optional):**
   * **Purpose:** Resource requests for HAProxy pods

@@ -101,6 +101,11 @@ jobs:
       - name: Run negative contract tests (tokenless)
         run: python3 scripts/contract_negative_tests.py
 
+      - name: Check migration plan and Cilium guidance regressions
+        run: |
+          python3 scripts/tests/test_migration_network_plan.py
+          python3 scripts/tests/test_cilium_intake.py
+
   packer-validate:
     runs-on: ubuntu-latest
     name: Validate Packer and supply-chain fixtures
@@ -148,6 +153,7 @@ jobs:
           scripts/tests/test_leapmicro_transactional_cleanup.sh
           scripts/tests/test_microos_packer_hardening.sh
           scripts/tests/test_microos_verifier.sh
+          python3 scripts/tests/test_image_download.py
           scripts/tests/test_microos_snapshot_selection.sh
           scripts/tests/test_create_distribution.sh
           scripts/tests/test_authorized_keys_reconcile.sh
@@ -237,4 +243,4 @@ jobs:
           persist-credentials: false
 
       - name: terraform fmt
-        uses: dflook/terraform-fmt-check@5702d43749973bd5b54e2380f090c1ad8054ecd4 # v3.0.0
+        uses: dflook/terraform-fmt-check@1946c2a46d8d3a3001998f9c769a08cedcd28f5d # v3.0.1
