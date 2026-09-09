@@ -13,6 +13,12 @@ hcloud network describe k3s          # Check network
 hcloud loadbalancer describe k3s-traefik  # Check LB
 ```
 
+## HAProxy TLS Failures
+
+For intermittent TLS failures with HAProxy behind a PROXY-protocol load balancer,
+see [HAProxy transport-peer diagnosis](haproxy-proxy-protocol.md). Verify the
+socket source address before changing trusted CIDRs or Cilium settings.
+
 ## SSH Troubleshooting
 
 ```sh

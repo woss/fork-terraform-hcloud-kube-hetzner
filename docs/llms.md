@@ -2842,17 +2842,17 @@ controller:
   * Pins the HAProxy Ingress *Helm chart version*.
 
 ```terraform
-  # If you want to configure additional proxy protocol trusted IPs for haproxy, enter them here as a list of IPs (strings).
-  # Example for Cloudflare:
+  # Verified transport peers that MUST send PROXY protocol. Replace placeholders.
   # haproxy_additional_proxy_protocol_ips = [
-  #   "173.245.48.0/20",
-  #   // ... more Cloudflare IP ranges ...
+  #   "203.0.113.10/32",
+  #   "2001:db8::10/128"
   # ]
 ```
 
 * **`haproxy_additional_proxy_protocol_ips` (List of Strings, Optional, specific to `ingress_controller = "haproxy"`):**
-  * **Purpose:** Similar to `traefik_additional_trusted_ips`, this configures trusted source IPs for PROXY protocol when using HAProxy Ingress. If HAProxy receives PROXY protocol headers from these IPs, it will trust the client IP information within.
-  * **Use Case:** When HAProxy is behind another proxy (like Cloudflare or the Hetzner LB using PROXY protocol).
+  * **Purpose:** Adds transport-peer CIDRs from which HAProxy requires a PROXY protocol preamble and accepts its client address. This is not forwarded HTTP header trust: ordinary HTTP/TLS from a listed peer fails.
+  * **Default:** `[]`; the non-Klipper default values already include `127.0.0.1/32` and `10.0.0.0/8`.
+  * **Use Case:** A verified load-balancer or SNAT peer outside the defaults. Prefer exact `/32` or `/128` peers, not original client or CDN ranges. Check both PROXY and ordinary traffic before adding a peer. See [HAProxy PROXY protocol](haproxy-proxy-protocol.md).
 
 ```terraform
   # Configure CPU and memory requests for each HAProxy pod
@@ -3309,7 +3309,8 @@ Each of these `*_values` variables:
   # EOT
   
   # Custom HAProxy configuration
-  # haproxy_additional_proxy_protocol_ips = ["10.0.0.0/8", "172.16.0.0/12"]
+  # Verified PROXY transport peer only; replace this placeholder.
+  # haproxy_additional_proxy_protocol_ips = ["203.0.113.10/32"]
   # haproxy_requests_cpu = "250m"
   # haproxy_requests_memory = "256Mi"
   # haproxy_values = <<-EOT
@@ -3328,8 +3329,8 @@ Each of these `*_values` variables:
   * **Format:** YAML heredoc string
 
 * **`haproxy_additional_proxy_protocol_ips` (List of Strings, Optional):**
-  * **Purpose:** Additional trusted IPs for HAProxy proxy protocol
-  * **Default:** Includes common private ranges
+  * **Purpose:** Additional transport-peer CIDRs required to send PROXY protocol; ordinary HTTP/TLS from matching peers fails.
+  * **Default:** `[]`; non-Klipper rendered defaults include `127.0.0.1/32` and `10.0.0.0/8`. See [HAProxy PROXY protocol](haproxy-proxy-protocol.md).
 
 * **`haproxy_requests_cpu` / `haproxy_requests_memory` (String, Optional):**
   * **Purpose:** Resource requests for HAProxy pods

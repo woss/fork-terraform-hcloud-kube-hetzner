@@ -2218,7 +2218,7 @@ variable "haproxy_requests_memory" {
 variable "haproxy_additional_proxy_protocol_ips" {
   type        = list(string)
   default     = []
-  description = "Additional trusted proxy protocol IPs to pass to haproxy."
+  description = "Additional transport-peer CIDRs required to send PROXY protocol to HAProxy. Use verified peer /32 or /128 addresses, not client or CDN ranges; ordinary HTTP/TLS from matching peers will fail. See docs/haproxy-proxy-protocol.md."
 
   validation {
     condition = alltrue([
