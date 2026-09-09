@@ -12,9 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The migration plan auditor now blocks standalone server-network detachment and flags in-place private/public networking changes. A plan with no server replacement is not sufficient proof of IP/MAC preservation, guest routing, or quorum-safe rollout. The underlying v2 attachment migration and existing-cluster NAT transitions still require separate operator review (#2277, #2283).
 - Cilium users migrating from v2 must compare effective kube-proxy replacement, BPF masquerading, and tunnel settings. Unchanged inputs can change those settings in v3; changing `enable_kube_proxy` alone does not restart existing K3s agents. Current v3 defaults are unchanged (#2287, #2288).
 
+### 🚀 New Features
+
+- Accept the v1.36 channel for K3s and RKE2 without changing defaults; explicitly approved for inclusion in 3.2.1 (#2276; thanks @steache).
+
 ### 🐛 Bug Fixes
 
-- Accept the v1.36 channel for K3s and RKE2 without changing defaults (#2276; thanks @steache).
 - Refresh both reviewed MicroOS appliance digests after the publisher rotated its rolling images. Independent signature, artifact-identity and complete-image checks preserve fail-closed verification for new snapshot builds.
 - Allow slow Leap Micro and MicroOS appliance downloads with separate DNS/connect/read timeouts and sanitized failure diagnostics, preserving signatures, digest pins, and mirror authentication safeguards (#2284; thanks @clemlesne).
 - Detect network attachment deletion and in-place server networking risks in saved migration plans, including unknown planned values (#2277, #2283; thanks @robsumoza and @clemlesne).
