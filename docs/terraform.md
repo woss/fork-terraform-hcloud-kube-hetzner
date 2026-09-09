@@ -378,7 +378,7 @@
 | <a name="input_ssh_authorized_keys_exclusive"></a> [ssh\_authorized\_keys\_exclusive](#input\_ssh\_authorized\_keys\_exclusive) | Whether to manage /root/.ssh/authorized\_keys exclusively on cluster nodes. The default false preserves unknown out-of-band keys while revoking module-managed keys removed from ssh\_public\_key or ssh\_additional\_public\_keys. Set true to replace the file with only module-managed keys. | `bool` | `false` | no |
 | <a name="input_ssh_hcloud_key_label"></a> [ssh\_hcloud\_key\_label](#input\_ssh\_hcloud\_key\_label) | Additional SSH public Keys by hcloud label. e.g. role=admin | `string` | `""` | no |
 | <a name="input_ssh_max_auth_tries"></a> [ssh\_max\_auth\_tries](#input\_ssh\_max\_auth\_tries) | The maximum number of authentication attempts permitted per connection. | `number` | `2` | no |
-| <a name="input_ssh_port"></a> [ssh\_port](#input\_ssh\_port) | The main SSH port to connect to the nodes. | `number` | `22` | no |
+| <a name="input_ssh_port"></a> [ssh\_port](#input\_ssh\_port) | The SSH port configured at node creation and used by Terraform connections. Changing it does not migrate existing node listeners and can interrupt SSH access. See docs/ssh.md#ssh-port-lifecycle before changing it on an existing cluster. | `number` | `22` | no |
 | <a name="input_ssh_private_key"></a> [ssh\_private\_key](#input\_ssh\_private\_key) | SSH private Key. | `string` | n/a | yes |
 | <a name="input_ssh_public_key"></a> [ssh\_public\_key](#input\_ssh\_public\_key) | Single-line OpenSSH public key used for node access. | `string` | n/a | yes |
 | <a name="input_subnet_count"></a> [subnet\_count](#input\_subnet\_count) | The amount of subnets into which the network will be split. Must be a power of 2. | `number` | `256` | no |

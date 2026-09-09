@@ -355,7 +355,7 @@ For machine-readable review:
 
 ```bash
 terraform show -json v3-upgrade.tfplan > v3-upgrade-plan.json
-uv run python /path/to/kube-hetzner/scripts/v2_to_v3_migration_assistant.py --root . --plan-json v3-upgrade-plan.json
+uv run python /path/to/kube-hetzner/scripts/v2_to_v3_migration_assistant.py --root . --plan-json v3-upgrade-plan.json --strict
 ```
 
 Run the protected-infrastructure gate:
@@ -384,6 +384,31 @@ is a stop condition: do not apply, and investigate the proposed destroy/replace
 first. This gate is the hard no-destroy floor; still review every
 non-protected resource action in the full plan. Do not approve a plan because it
 is "probably fine." Make every replacement intentional.
+
+### Network and SSH transition warnings
+
+No server replacements does **not** mean a network transition is safe. Stop
+on standalone `hcloud_server_network` attachment deletion or changed/unknown
+server `network` or `public_net` values. Preserving the old private IP alone
+does not eliminate the attachment deletion. Private IP/MAC changes can disrupt
+node identity and interface naming, and public-network updates can power-cycle
+nodes without replacing the server resource.
+
+Use the strict auditor above in addition to manual inspection of the saved
+plan. A passing report does not certify guest routing or readiness between
+node changes. Neither targeted applies nor `-parallelism=1` establish a safe
+rolling migration. Existing guests do not automatically receive updated
+cloud-init repairs. Before enabling NAT on existing nodes, verify persistent
+guest routes, egress, management access, and rollback; a previously installed
+fallback route may preserve egress but must not be assumed. Check existing
+autoscaled nodes separately from Terraform-managed servers.
+
+Keep SSH-port and network-topology changes separate from the module upgrade.
+Changing `ssh_port` alone does not migrate existing listeners. For an accidental
+change, restore the original configured port and review a fresh plan, then
+verify each node rather than assuming all nodes recover. See
+[SSH port lifecycle and recovery](ssh.md#ssh-port-lifecycle) and the
+[network transition safety limits](../MIGRATION.md#network-and-ssh-transition-limits).
 
 ### Quick diagnostics for failed plans
 

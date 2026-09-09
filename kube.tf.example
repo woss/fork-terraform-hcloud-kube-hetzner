@@ -49,7 +49,9 @@ module "kube-hetzner" {
   # v3 topology chooser and release rules:
   # docs/v3-topology-recommendations.md
 
-  # Customize the SSH port (by default 22)
+  # Customize the SSH port before creating nodes (by default 22).
+  # Changing this later does not migrate existing listeners and can interrupt SSH.
+  # Lifecycle limits and recovery: docs/ssh.md#ssh-port-lifecycle
   # ssh_port = 2222
 
   # * Your ssh public key

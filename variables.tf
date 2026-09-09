@@ -114,7 +114,7 @@ variable "microos_arm_snapshot_id" {
 }
 
 variable "ssh_port" {
-  description = "The main SSH port to connect to the nodes."
+  description = "The SSH port configured at node creation and used by Terraform connections. Changing it does not migrate existing node listeners and can interrupt SSH access. See docs/ssh.md#ssh-port-lifecycle before changing it on an existing cluster."
   type        = number
   default     = 22
 

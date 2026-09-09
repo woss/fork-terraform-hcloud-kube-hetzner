@@ -125,7 +125,8 @@ module "kube-hetzner" {
     * This is a deliberate design choice to prevent accidental data loss or full cluster rebuilds for minor changes to sensitive, foundational attributes.
 
 ```terraform
-  # Customize the SSH port (by default 22)
+  # Customize the SSH port before creating nodes (by default 22).
+  # Changing this later is not an in-place SSH-port migration.
   # ssh_port = 2222
 ```
 
@@ -134,6 +135,7 @@ module "kube-hetzner" {
   * **Purpose:** Allows you to specify a custom SSH port for the nodes created by the module. The module will configure the SSH daemon on the nodes to listen on this port and adjust firewall rules accordingly.
   * **Use Case:** Security through obscurity (minor benefit) or if port 22 is blocked/used by something else in your environment.
   * **Implication:** You'll need to specify this custom port when SSHing into the nodes (e.g., `ssh -p 2222 user@node_ip`).
+  * **Existing clusters:** Changing `ssh_port` updates Terraform's connection settings and the managed firewall rule, but does not migrate sshd or its SELinux port configuration on existing nodes. It can interrupt SSH access or fail partway through an apply. NAT routers can be replaced, and existing/new autoscaler nodes can retain different ports. Read [SSH port lifecycle and recovery](ssh.md#ssh-port-lifecycle) before changing it; restoring the original configured port and reviewing a fresh plan is a recovery starting point, not a guarantee that every node recovers.
 
 ```terraform
   # * Your ssh public key
