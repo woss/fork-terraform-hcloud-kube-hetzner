@@ -115,6 +115,31 @@ first. For subnet replacements, start with the
 the hard no-destroy floor; still review every non-protected resource action in
 the full plan.
 
+#### Network and SSH transition limits
+
+A plan with no server replacements is not sufficient evidence of a safe
+network upgrade. Stop on deletion of a standalone `hcloud_server_network`
+attachment, changed or unknown inline server `network` values, or changed or
+unknown `public_net` values until there is a verified migration procedure.
+Private IP/MAC changes can disrupt node identity and interface naming; a
+public-network update can power-cycle a node even when Terraform calls it an
+in-place update. Pinning the old IP alone does not prevent an attachment delete.
+
+Review the saved plan with the migration assistant's `--strict` option as well
+as the no-destroy gate, and inspect network changes manually. Neither a clean
+auditor report nor `-parallelism=1` proves guest routing or quorum-safe rolling
+sequencing. Current cloud-init repairs are not automatically installed on
+existing guests. Enabling NAT on existing nodes needs verification of persistent
+routes, egress and management access before and after public addresses are
+removed; an existing fallback route may preserve egress, but is not guaranteed.
+Preserve current addresses and require guest-level acceptance and rollback
+before applying these transitions. See the
+[saved-plan review procedure](docs/v2-to-v3-migration.md#phase-6-create-and-inspect-a-plan).
+
+Keep the existing `ssh_port` during a module upgrade. Changing it does not
+migrate existing listeners and can interrupt management access; see
+[SSH port lifecycle and recovery](docs/ssh.md#ssh-port-lifecycle).
+
 #### Compatibility freeze table
 
 | Concern | v3 default | To freeze v2 behavior |
