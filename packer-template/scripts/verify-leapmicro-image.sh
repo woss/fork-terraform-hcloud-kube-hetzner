@@ -154,13 +154,27 @@ download() {
   url="$2"
   destination="$3"
   printf '%s\n' "$url" > "$wget_input"
+  # Keep URLs (including redirect targets) private; report only wget's exit category.
+  download_status=0
   if [ -s "$wget_config" ]; then
-    wget -q --config="$wget_config" --input-file="$wget_input" --max-redirect=0 --timeout=5 --waitretry=5 --tries=5 --retry-connrefused --inet4-only -O "$destination" \
-      || fail "failed to download $label"
+    wget -q --config="$wget_config" --input-file="$wget_input" --max-redirect=0 --dns-timeout=10 --connect-timeout=15 --read-timeout=60 --waitretry=5 --tries=5 --retry-connrefused --inet4-only -O "$destination" \
+      2>/dev/null || download_status=$?
   else
-    wget -q --input-file="$wget_input" --timeout=5 --waitretry=5 --tries=5 --retry-connrefused --inet4-only -O "$destination" \
-      || fail "failed to download $label"
+    wget -q --input-file="$wget_input" --dns-timeout=10 --connect-timeout=15 --read-timeout=60 --waitretry=5 --tries=5 --retry-connrefused --inet4-only -O "$destination" \
+      2>/dev/null || download_status=$?
   fi
+  case "$download_status" in
+    0) return ;;
+    2) reason="option parsing error" ;;
+    3) reason="file I/O error" ;;
+    4) reason="network failure (including timeouts)" ;;
+    5) reason="TLS certificate verification failure" ;;
+    6) reason="authentication failure" ;;
+    7) reason="protocol error" ;;
+    8) reason="server error response" ;;
+    *) reason="download error" ;;
+  esac
+  fail "failed to download $label (wget exit $download_status: $reason)"
 }
 
 [ -r "$OPENSUSE_SIGNING_KEY_FILE" ] || fail "vendored openSUSE signing key is unreadable"

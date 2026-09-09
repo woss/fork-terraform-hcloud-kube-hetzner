@@ -582,7 +582,14 @@ module "kube-hetzner" {
   # easier, as all public traffic passes through a single strongly secured node. It does
   # however also introduce a single point of failure, so if you need high-availability on your
   # egress, you should consider other configurations.
-  # If a simple failover mechanism is acceptable, you can set enable_redundancy = true to deploy two NAT routers running keepalived to provide a failover mechanism.
+  # Set enable_redundancy = true to deploy two keepalived routers for active/standby failover,
+  # not additional capacity: one router handles all egress routed through the NAT gateway.
+  # The default route has a single gateway, not ECMP/load sharing across the pair.
+  # Size server_type for peak throughput, packets per second, and connection tracking load
+  # on one router, including external storage traffic when it uses this egress path.
+  # Both routers use BACKUP with nopreempt: a recovered higher-priority router does not
+  # take over from a healthy active router. Traffic stays at the failover location until
+  # another failover or an operator-directed switch; recovery alone does not move it back.
   #
   # Hetzner removed the DHCP Router option from private networks on 2025-08-11, so the module
   # now ensures each node attached to the private network persists a default route via the
