@@ -148,6 +148,7 @@ jobs:
           scripts/tests/test_leapmicro_transactional_cleanup.sh
           scripts/tests/test_microos_packer_hardening.sh
           scripts/tests/test_microos_verifier.sh
+          python3 scripts/tests/test_image_download.py
           scripts/tests/test_microos_snapshot_selection.sh
           scripts/tests/test_create_distribution.sh
           scripts/tests/test_authorized_keys_reconcile.sh
