@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 🐛 Bug Fixes
 
+- Accept the v1.36 channel for K3s and RKE2 without changing defaults (#2276; thanks @steache).
 - Refresh both reviewed MicroOS appliance digests after the publisher rotated its rolling images. Independent signature, artifact-identity and complete-image checks preserve fail-closed verification for new snapshot builds.
 - Allow slow Leap Micro and MicroOS appliance downloads with separate DNS/connect/read timeouts and sanitized failure diagnostics, preserving signatures, digest pins, and mirror authentication safeguards (#2284; thanks @clemlesne).
 - Detect network attachment deletion and in-place server networking risks in saved migration plans, including unknown planned values (#2277, #2283; thanks @robsumoza and @clemlesne).
@@ -24,18 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Clarify HAProxy's required PROXY-protocol transport peers and replace misleading CDN-range examples with exact-peer diagnostics. Trusted networks and ingress defaults are unchanged (#2288; thanks @ChrisKretschmer).
 - Warn that changing `ssh_port` alone does not migrate existing listeners and may interrupt management access; document recovery limits for mixed fleets and NAT routers (#2285; thanks @clemlesne).
 - Clarify that NAT redundancy provides active/standby failover, not additional egress capacity, and explain `nopreempt` recovery behavior (#2281; thanks @clemlesne).
-
-### Added
-
-- **K3s and RKE2 v1.36 channel** - `k3s_channel` and `rke2_channel` now accept `"v1.36"`, so a
-  cluster can follow patch releases of the 1.36 line without pinning an exact release. The
-  reviewed releases and their vetted checksums were already present
-  (`k3s_channel_release_manifest` stable/latest resolve to `v1.36.3+k3s1`, and
-  `rke2_channel_release_manifest` latest to `v1.36.3+rke2r1`); only the channel keys were
-  missing. Defaults are unchanged: K3s follows `stable`, while RKE2 retains its
-  exact `v1.32.5+rke2r1` pin. To follow the RKE2 channel, explicitly set
-  `rke2_version = ""`. Channel acceptance is enforced by both variable validation
-  and the cross-variable plan contract.
 
 ---
 

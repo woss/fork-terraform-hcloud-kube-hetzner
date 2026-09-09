@@ -3399,12 +3399,7 @@ These variables are part of the current v3 module contract and should be conside
   * **Default:** `rke2_channel = "v1.32"`, `rke2_version = "v1.32.5+rke2r1"`.
   * **Purpose:** Selects the RKE2 install channel or exact RKE2 version.
   * **Considerations:** Exact versions supersede channels. Initial channel bootstrap uses the release snapshot reviewed with the module; later automated upgrades can follow the configured live channel.
-  * **Supported unpinned channels:** `stable`, `latest`, `testing`, and `v1.36`. To follow 1.36 patches, set both values below; setting the channel alone leaves the default exact 1.32.5 pin in effect. Defaults are unchanged.
-
-```hcl
-rke2_channel = "v1.36"
-rke2_version = ""
-```
+  * **Supported unpinned channels:** `stable`, `latest`, `testing`, and `v1.36`. Explicitly set `rke2_version = ""` to follow a channel instead of the default exact-version pin.
 
 * **`rke2_artifact_sha256` (Map of Strings, Optional):**
   * **Default:** `{}`.
