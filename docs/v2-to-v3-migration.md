@@ -42,6 +42,8 @@ Complete this before applying a v3 plan:
 - Every inverted boolean was reviewed manually, especially public-IP,
   SELinux, kube-proxy, network-policy, placement-group, CSI, and load-balancer
   flags.
+- Cilium users have reviewed the [datapath migration warning](../MIGRATION.md#cilium-datapath-migration)
+  and compared effective Helm values, even if no v2-only inputs were found.
 - `terraform fmt -recursive`, `terraform init -upgrade`, and
   `terraform validate` pass.
 - If using OpenTofu, `tofu init -upgrade`, `tofu validate`, and `tofu plan`

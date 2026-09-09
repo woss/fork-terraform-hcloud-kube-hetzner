@@ -251,6 +251,21 @@ def collect_topology_warnings(root: Path) -> list[TopologyWarning]:
     for name in sorted(locations):
         warnings.append(TopologyWarning(name, tuple(locations[name]), TOPOLOGY_PATTERNS[name]))
 
+    cni_locations = collect_assignments(root, {"cni_plugin"})
+    if cni_locations:
+        warnings.append(
+            TopologyWarning(
+                "Cilium datapath migration review",
+                tuple(cni_locations["cni_plugin"]),
+                "If this CNI selection resolves to Cilium, review MIGRATION.md's Cilium datapath migration warning. "
+                "v2.21.0 hardcoded kubeProxyReplacement and bpf.masquerade to true; v3 derives both from "
+                "!enable_kube_proxy. Since enable_kube_proxy defaults to true, both Cilium values default to false. Compare effective Helm "
+                "values even with zero v2 input findings. Setting enable_kube_proxy=false on a running cluster "
+                "requires a separately tested transition: k3s agents fetch the setting at startup, and changing "
+                "this input alone does not restart existing agents. This static scanner does not resolve CNI expressions.",
+            )
+        )
+
     shared_subnet_locations = find_regex(
         root,
         re.compile(r"(?<![A-Za-z0-9_])network_subnet_mode(?![A-Za-z0-9_])\s*=\s*\"shared\""),
