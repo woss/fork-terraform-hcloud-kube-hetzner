@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 📚 Documentation
 
+- Clarify HAProxy's required PROXY-protocol transport peers and replace misleading CDN-range examples with exact-peer diagnostics. Trusted networks and ingress defaults are unchanged (#2288; thanks @ChrisKretschmer).
 - Warn that changing `ssh_port` alone does not migrate existing listeners and may interrupt management access; document recovery limits for mixed fleets and NAT routers (#2285; thanks @clemlesne).
 - Clarify that NAT redundancy provides active/standby failover, not additional egress capacity, and explain `nopreempt` recovery behavior (#2281; thanks @clemlesne).
 
