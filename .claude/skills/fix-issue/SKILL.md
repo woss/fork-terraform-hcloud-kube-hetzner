@@ -206,7 +206,7 @@ git add <specific-files>
 git commit -m "$(cat <<'EOF'
 fix: <brief description>
 
-Fixes #<number>
+Refs #<number>
 
 <explanation of what was wrong and how it's fixed>
 EOF
@@ -256,6 +256,12 @@ Before completing ANY issue:
 | Push | `git push -u origin <branch>` |
 
 ## After Completion
+
+Use non-closing `Refs #<number>` references by default in commits and PR
+descriptions. Reserve `Fixes`, `Closes` or `Resolves` keywords for verified full
+resolution: GitHub can close the issue automatically on merge, before an agent
+performs the manual closure check. Never use closing keywords for safeguards,
+diagnostic improvements or partial fixes to an unresolved runtime issue.
 
 1. Create PR referencing the issue
 2. Complete independent review and action automated Codex findings using `review-pr`
