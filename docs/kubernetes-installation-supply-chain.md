@@ -25,7 +25,16 @@ Reviewed channel payload pins come from the official K3s and RKE2 GitHub release
 
 ## Channels and exact versions
 
-For initial bootstrap, `stable`, `latest`, `testing`, and the supported K3s `v1.33` preservation channel resolve to exact releases in the module's reviewed manifest. They are snapshots, not mutable runtime lookups. System Upgrade Controller plans keep their existing exact-version/channel behavior after bootstrap.
+For initial bootstrap, `stable`, `latest`, `testing`, `v1.36` (both distributions), and the K3s `v1.33` preservation channel resolve to exact releases in the module's reviewed manifest. They are snapshots, not mutable runtime lookups. With an empty exact version and automated upgrades enabled, System Upgrade Controller plans follow the live channel after bootstrap. Selecting `v1.36` follows that minor's patch releases, not newer Kubernetes minors.
+
+For RKE2 channel following, explicitly clear its default exact version; changing the channel alone does not override that pin:
+
+```hcl
+rke2_channel = "v1.36"
+rke2_version = ""
+```
+
+K3s uses `k3s_channel = "v1.36"` with `k3s_version = ""`. Existing defaults and exact-version precedence are unchanged. The 1.36 bootstrap snapshots remain `v1.36.3+k3s1` and `v1.36.3+rke2r1` with built-in amd64/arm64 digests, even when upstream channels advance. Upgrade-controller channel downloads retain their existing upstream trust boundary; bootstrap digest pinning does not pin future controller upgrades.
 
 An exact `k3s_version` or `rke2_version` already present in the manifest needs no extra input. For another official release, independent pins are optional but recommended for each architecture used by the cluster:
 
