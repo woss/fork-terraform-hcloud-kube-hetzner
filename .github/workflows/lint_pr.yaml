@@ -135,7 +135,7 @@ jobs:
           terraform_wrapper: false
 
       - name: Install verification tools
-        run: sudo apt-get update && sudo apt-get install --yes fish hcloud-cli ripgrep rpm shellcheck zip zsh
+        run: sudo apt-get update && sudo apt-get install --yes fish haproxy hcloud-cli openssl ripgrep rpm shellcheck zip zsh
 
       - name: Validate Packer template and verifier fixtures
         env:
@@ -159,6 +159,7 @@ jobs:
           scripts/tests/test_microos_packer_hardening.sh
           scripts/tests/test_microos_verifier.sh
           python3 scripts/tests/test_image_download.py
+          python3 scripts/tests/test_haproxy_proxy_protocol.py
           scripts/tests/test_microos_snapshot_selection.sh
           scripts/tests/test_create_distribution.sh
           scripts/tests/test_authorized_keys_reconcile.sh
