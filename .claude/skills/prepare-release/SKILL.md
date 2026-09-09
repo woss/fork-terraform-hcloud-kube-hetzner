@@ -53,7 +53,7 @@ Therefore:
 - Do not move `[Unreleased]` to `[vX.Y.Z] - YYYY-MM-DD` before tagging unless you are also bypassing the workflow and manually providing release notes.
 - Do not run `gh release create` during the normal path; the tag workflow owns publication. Use it only after re-running the local integrity gates if publication fails.
 - If Karim asks for a tiny release-prep correction during release, commit it on the release branch, merge it through the protected `master` pull-request path, then tag the resulting merged commit.
-- After a successful release, cut `CHANGELOG.md`: reset `## [Unreleased]` to an empty placeholder and move the released notes under `## [X.Y.Z] - YYYY-MM-DD`. Merge that cleanup through a release-maintenance pull request.
+- After a successful release, cut `CHANGELOG.md`: leave `## [Unreleased]` genuinely empty and move the released notes under `## [X.Y.Z] - YYYY-MM-DD`. Do not insert placeholder text or a separator before the next release heading: either would pass the publication workflow's non-whitespace guard. Merge that cleanup through a release-maintenance pull request.
 - Previous release notes must never remain under `## [Unreleased]`; otherwise the next tag workflow will publish stale notes again.
 - For v3-series releases, verify README's compact "Current release:" link points
   at the latest release tag and `CHANGELOG.md` carries the release content.
@@ -442,10 +442,6 @@ After confirming the live release, cut the changelog:
 
 ```markdown
 ## [Unreleased]
-
-_No unreleased changes._
-
----
 
 ## [X.Y.Z] - YYYY-MM-DD
 
