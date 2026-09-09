@@ -2306,7 +2306,7 @@ variable "k3s_artifact_sha256" {
 variable "rke2_channel" {
   type        = string
   default     = "v1.32" # Please update kube.tf.example too when changing this variable
-  description = "Selects the RKE2 channel when rke2_version is empty. Initial bootstrap uses the exact channel release reviewed with this module version; System Upgrade Controller plans can continue following the live channel. Use rke2_version for exact pinning."
+  description = "Selects the RKE2 channel when rke2_version is empty. Initial bootstrap uses the exact channel release reviewed with this module version; System Upgrade Controller plans can continue following the live channel. v1.36 is accepted for minor-line pinning; explicitly clear the default rke2_version to follow a channel. Use rke2_version for an exact release."
 
   validation {
     condition     = contains(["stable", "latest", "testing", "v1.18", "v1.19", "v1.20", "v1.21", "v1.22", "v1.23", "v1.24", "v1.25", "v1.26", "v1.27", "v1.28", "v1.29", "v1.30", "v1.31", "v1.32", "v1.33", "v1.34", "v1.35", "v1.36"], var.rke2_channel)

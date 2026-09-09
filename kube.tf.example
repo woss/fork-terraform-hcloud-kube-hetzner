@@ -1010,9 +1010,9 @@ module "kube-hetzner" {
 
   # If you want to disable the automatic upgrade of k3s, you can set below to "false".
   # The default channel follows upstream stable. For production pinning, set k3s_version to an exact release tag.
-  # v1.33 remains accepted as an explicit v2 upgrade-preservation channel. Other minor channels are not accepted
-  # as live installer channels unless an exact k3s_version is set, because Rancher's minor channel endpoints are
-  # not reliable enough to be used as deployment-time contracts.
+  # v1.33 and v1.36 are supported minor-line channels when k3s_version is empty.
+  # Bootstrap uses the module-reviewed release; automated upgrades can follow the live minor channel.
+  # Other minor channels require an exact k3s_version, which also pins automated upgrades.
   # For production use, always use an HA setup with at least 3 control-plane nodes and 2 agents, and keep this on for maximum security.
 
   # The default is "true" (in HA setup i.e. at least 3 control plane nodes & 2 agents, just keep it enabled since it works flawlessly).
@@ -1905,8 +1905,10 @@ replicas: 3
   # myipv4_ref = "myipv4"
 
   # RKE2 exact version/channel controls. rke2_version wins over rke2_channel.
-  # Accepts stable, latest, testing, or a minor line such as "v1.36".
-  # rke2_channel = "stable"
+  # To follow 1.36 patches, set BOTH values below: the default rke2_version is an exact
+  # v1.32.5+rke2r1 pin and otherwise overrides the channel. Defaults are unchanged.
+  # Unpinned channels accept stable, latest, testing, or v1.36.
+  # rke2_channel = "v1.36"
   # rke2_version = ""
   # Optional independent pins for exact versions not reviewed in this module release.
   # Missing architectures use that exact official release's checksum publication.

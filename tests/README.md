@@ -43,6 +43,20 @@ the external-network Tailscale plan smoke.
 
 ## Render Harness
 
+For provider-free Kubernetes channel contract plans and upgrade-template checks:
+
+```bash
+uv run scripts/tests/test_kubernetes_channels.py --cli terraform
+uv run scripts/tests/test_kubernetes_channels.py --cli tofu
+```
+
+These extract production variable validations, channel preconditions and release
+manifests into a temporary root with only the built-in `terraform_data` resource.
+They verify supported channels, reviewed bootstrap versions/digests, exact-version
+precedence (including RKE2's default pin), unsupported channels, and both server
+and agent upgrade plans. No cloud credentials, provider API calls, or applies are
+used. This is contract coverage, not an existing-cluster upgrade test.
+
 For hermetic rendered-template checks, run:
 
 ```bash
