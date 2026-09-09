@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 📚 Documentation
 
+- Warn that changing `ssh_port` alone does not migrate existing listeners and may interrupt management access; document recovery limits for mixed fleets and NAT routers (#2285; thanks @clemlesne).
 - Clarify that NAT redundancy provides active/standby failover, not additional egress capacity, and explain `nopreempt` recovery behavior (#2281; thanks @clemlesne).
 
 ---
