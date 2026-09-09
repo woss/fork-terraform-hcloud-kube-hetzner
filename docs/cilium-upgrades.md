@@ -7,11 +7,13 @@ do not constitute a validated in-place datapath migration procedure.
 ## Device MTU is not route MTU
 
 The module's standard Cilium Helm `MTU: 1450` is the base device MTU, not a
-promise that encrypted pod traffic can carry 1450-byte IP packets. Cilium
-1.17.18 calculates workload device and route MTUs separately. For a 1450
+promise that encrypted pod traffic can carry 1450-byte IP packets. The reported
+Cilium 1.17.18 version calculates workload device and route MTUs separately. For a 1450
 base, WireGuard plus tunneling yields a 1320 route MTU; WireGuard without
 tunneling yields 1370. A pod veth showing 1450 alone is not evidence that
-the route MTU is wrong.
+the route MTU is wrong. These figures were verified for 1.17.18, not the module's
+current default of 1.19.3. Check the calculation and effective routes for your
+deployed Cilium version rather than treating these numbers as universal.
 
 Do not subtract these overheads again from the module default: Cilium will
 subtract them from the reduced base too. Nor is automatic detection always
