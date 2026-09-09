@@ -197,13 +197,13 @@ terraform show -json v3-upgrade.tfplan > v3-upgrade-plan.json
 uv run python /path/to/kube-hetzner/scripts/v2_to_v3_migration_assistant.py --root . --plan-json v3-upgrade-plan.json --strict
 ```
 
-If `jq` is available, list destructive actions:
-
 The strict auditor also blocks standalone server-network detachment and flags
 changed or unknown inline private/public networking. No server replacements
 does not prove IP/MAC preservation, persistent guest routing, or quorum-safe
 rollout. Follow `MIGRATION.md#network-and-ssh-transition-limits`; preserve the
 existing SSH port and compare effective Cilium values before migration.
+
+If `jq` is available, list destructive actions:
 
 ```bash
 terraform show -json v3-upgrade.tfplan \
