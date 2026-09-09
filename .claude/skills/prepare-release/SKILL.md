@@ -465,6 +465,8 @@ Files that may need version updates:
 | `CHANGELOG.md` | Release content must stay under `[Unreleased]` until tag publication runs |
 | `docs/llms.md` | Example version references |
 | `kube.tf.example` | Version in comments |
+| `docs/v2-to-v3-migration.md` | Target module version in the migration example |
+| `.claude/skills/kh-assistant/SKILL.md` | Checked-in current release baseline (still verify live at startup) |
 | `.claude/skills/*/SKILL.md` | Operator workflows, v3 migration names, validation gates |
 | GPT knowledge | meta.version |
 

@@ -116,7 +116,7 @@ grep 'variable "<name>"' variables.tf
 
 ### Current v3 Baseline
 
-Verify the live tag at startup; the checked-in release baseline is **v3.2.0**.
+Verify the live tag at startup; the checked-in release baseline is **v3.2.1**.
 
 | Fact | Current contract |
 |------|------------------|
